@@ -1,0 +1,21 @@
+# Copy to /etc/systemd/system/trendpublish-weixin-relay.service and adjust paths/user.
+[Unit]
+Description=TrendPublish Weixin Relay
+Documentation=https://github.com/liyown/ai-trend-publish
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ai-trend-publish
+Environment=PORT=8080
+ExecStart=/usr/bin/env deno task relay --config /opt/ai-trend-publish/config/trendpublish.config.ts
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=30
+User=trendpublish
+Group=trendpublish
+
+[Install]
+WantedBy=multi-user.target
