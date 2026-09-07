@@ -35,6 +35,7 @@ import {
 } from "@src/features/weixin-article/services/account-learning-snapshot.ts";
 import type { ResolvedTrendPublishConfig } from "@src/utils/config/define-config.ts";
 import { hasDraftFallback } from "@src/features/weixin-article/services/article-draft.service.ts";
+import type { FactVerificationReport } from "@src/features/weixin-article/services/fact-verification.service.ts";
 
 const logger = new Logger("weixin-article-workflow");
 
@@ -682,6 +683,8 @@ export class WeixinArticleWorkflow {
       let finalReview = qualityReview;
       let finalReviewRef = qualityReviewRef;
       let revisionSummary = "未修复";
+      let factVerificationSummary = "未触发";
+      let factVerificationRef: ArtifactRef | undefined;
 
       const maxRevisionRounds = Math.max(
         0,
@@ -816,6 +819,103 @@ export class WeixinArticleWorkflow {
         }
       }
 
+      const highRiskFactIssues = finalReview.issues.filter((issue) =>
+        issue.category === "fact" &&
+        (issue.severity === "high" || issue.severity === "blocker")
+      );
+      if (
+        this.dependencies.config.qualityGate.blockOnHighFactIssue &&
+        highRiskFactIssues.length > 0
+      ) {
+        factVerificationRef = await this.runTrackedStep(
+          step,
+          runId,
+          "verify-high-risk-facts",
+          {
+            retries: { limit: 0, delay: "2 second", backoff: "linear" },
+            timeout: "3 minutes",
+          },
+          async () => {
+            const result = await this.dependencies.factVerificationService
+              .verify({
+                title: finalTitle,
+                html: await artifactStore.getText(finalHtmlRef),
+                issues: highRiskFactIssues,
+              });
+            const ref = await artifactStore.putJson(
+              artifactStore.createRunKey(
+                runId,
+                "18-fact-verification",
+                "json",
+              ),
+              result,
+              { label: "高危事实联网核验", contentType: "application/json" },
+            );
+            return { result: ref, artifacts: [ref] };
+          },
+          [finalHtmlRef, finalReviewRef, evidencePackRef],
+        );
+        const verification = await artifactStore
+          .getJson<FactVerificationReport>(factVerificationRef);
+        factVerificationSummary = formatFactVerificationSummary(verification);
+
+        if (verification.allSupported && verification.evidenceItems.length) {
+          const verifiedEvidencePack: EvidencePack = {
+            ...evidencePack,
+            generatedAt: new Date().toISOString(),
+            queries: [
+              ...new Set([
+                ...evidencePack.queries,
+                ...verification.items.map((item) => item.query),
+              ]),
+            ],
+            items: [...evidencePack.items, ...verification.evidenceItems],
+            gaps: [...evidencePack.gaps, ...verification.gaps],
+            skippedReason: undefined,
+          };
+          const verifiedReviewRef = await this.runTrackedStep(
+            step,
+            runId,
+            "review-with-verified-evidence",
+            {
+              retries: { limit: 1, delay: "2 second", backoff: "linear" },
+              timeout: "8 minutes",
+            },
+            async () => {
+              const planInputContents = await artifactStore
+                .getJson<ScrapedContent[]>(planInputContentsRef);
+              const result = await this.dependencies.qualityReviewService
+                .reviewArticle({
+                  title: finalTitle,
+                  html: await artifactStore.getText(finalHtmlRef),
+                  articlePlan,
+                  topicReport,
+                  contents: planInputContents,
+                  evidencePack: verifiedEvidencePack,
+                });
+              const ref = await artifactStore.putJson(
+                artifactStore.createRunKey(
+                  runId,
+                  "18-quality-review-after-fact-verification",
+                  "json",
+                ),
+                result,
+                {
+                  label: "事实核验后质量复审",
+                  contentType: "application/json",
+                },
+              );
+              return { result: ref, artifacts: [ref] };
+            },
+            [finalHtmlRef, finalReviewRef, factVerificationRef],
+          );
+          finalReviewRef = verifiedReviewRef;
+          finalReview = await artifactStore.getJson<ArticleQualityReview>(
+            verifiedReviewRef,
+          );
+        }
+      }
+
       const finalTitleRef = await artifactStore.putJson(
         artifactStore.createRunKey(runId, "18-final-title", "json"),
         { title: finalTitle },
@@ -926,6 +1026,7 @@ export class WeixinArticleWorkflow {
           coverRef,
           finalReviewRef,
           draftedTemplateDataRef,
+          ...(factVerificationRef ? [factVerificationRef] : []),
         ],
       );
       const publishResult = await artifactStore.getJson<PublishResult>(
@@ -962,6 +1063,7 @@ export class WeixinArticleWorkflow {
         - 编辑决策: ${formatEditorialDecisionSummary(editorialDecision)}
         - 文章计划: ${formatArticlePlanSummary(articlePlan)}
         - 修复: ${revisionSummary}
+        - 事实核验: ${factVerificationSummary}
         - 质量审稿: ${formatQualityReviewSummary(finalReview)}
         - 封面: ${formatCoverSummary(coverResult)}
         - 发布: ${formatPublishSummary(publishResult, dryRun)}`.trim();
@@ -1094,6 +1196,18 @@ function formatCoverSummary(result: CoverGenerationResult): string {
     return `使用默认封面${result.error ? `，原因: ${result.error}` : ""}`;
   }
   return "未生成";
+}
+
+function formatFactVerificationSummary(
+  report: FactVerificationReport,
+): string {
+  if (!report.attempted) return "未触发";
+  const supported =
+    report.items.filter((item) => item.verdict === "supported").length;
+  const contradicted =
+    report.items.filter((item) => item.verdict === "contradicted").length;
+  const insufficient = report.items.length - supported - contradicted;
+  return `${supported} 项支持，${contradicted} 项反驳，${insufficient} 项证据不足`;
 }
 
 function formatTopicSummary(report: EditorialTopicReport): string {

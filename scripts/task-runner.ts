@@ -52,6 +52,7 @@ const TEST_FILES = [
   "src/features/weixin-article/services/editorial-decision.service.test.ts",
   "src/features/weixin-article/services/article-plan.service.test.ts",
   "src/features/weixin-article/services/article-research.service.test.ts",
+  "src/features/weixin-article/services/fact-verification.service.test.ts",
   "src/features/weixin-article/services/article-revision.service.test.ts",
   "src/features/weixin-article/services/quality-review.service.test.ts",
   "src/features/weixin-article/services/quality-gate.service.test.ts",
