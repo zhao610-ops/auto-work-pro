@@ -17,6 +17,10 @@ import type {
   ArticleContentFetchResult,
   ArticleContentHydrationResult,
 } from "@src/features/weixin-article/services/content-scrape.service.ts";
+import {
+  isTrendWatchingUrl,
+  scrapeTrendWatchingDirect,
+} from "@src/integrations/fetch/providers/trendwatching-direct-scraper.ts";
 
 type ArticleFetchProvider = FetchProviderId;
 
@@ -64,6 +68,15 @@ export class ArticleFetchRouter implements ArticleContentFetcher {
         };
         failures.push(failure);
         await onAttemptFailure?.(failure);
+
+        if (provider === "firecrawl" && isTrendWatchingUrl(source.url)) {
+          const fallback = await this.scrapeTrendWatchingFallback(
+            source.url,
+            failures,
+            onAttemptFailure,
+          );
+          if (fallback) return fallback;
+        }
       } catch (error) {
         const failure = {
           provider,
@@ -71,6 +84,14 @@ export class ArticleFetchRouter implements ArticleContentFetcher {
         };
         failures.push(failure);
         await onAttemptFailure?.(failure);
+        if (provider === "firecrawl" && isTrendWatchingUrl(source.url)) {
+          const fallback = await this.scrapeTrendWatchingFallback(
+            source.url,
+            failures,
+            onAttemptFailure,
+          );
+          if (fallback) return fallback;
+        }
       }
     }
 
@@ -157,6 +178,35 @@ export class ArticleFetchRouter implements ArticleContentFetcher {
     ).create({ config: this.config });
     this.scrapers.set(provider, scraper);
     return scraper;
+  }
+
+  private async scrapeTrendWatchingFallback(
+    sourceUrl: string,
+    failures: ArticleContentFetchFailure[],
+    onAttemptFailure?: (
+      failure: ArticleContentFetchFailure,
+    ) => Promise<void> | void,
+  ): Promise<ArticleContentFetchResult | undefined> {
+    try {
+      const contents = await scrapeTrendWatchingDirect(sourceUrl);
+      if (contents.length > 0) {
+        return { contents, provider: "trendwatching-direct", failures };
+      }
+      const failure = {
+        provider: "trendwatching-direct",
+        message: "直接抓取成功但未提取到正文",
+      };
+      failures.push(failure);
+      await onAttemptFailure?.(failure);
+    } catch (error) {
+      const failure = {
+        provider: "trendwatching-direct",
+        message: error instanceof Error ? error.message : String(error),
+      };
+      failures.push(failure);
+      await onAttemptFailure?.(failure);
+    }
+    return undefined;
   }
 
   private getHydrationProviders(): ArticleFetchProvider[] {

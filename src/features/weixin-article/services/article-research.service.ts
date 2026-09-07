@@ -13,12 +13,14 @@ import type {
 import { Logger } from "@zilla/logger";
 
 const logger = new Logger("weixin-article-research-service");
+const MIN_RESEARCH_QUERY_BUDGET_MS = 20_000;
 
 export interface ArticleResearchConfig {
   enabled: boolean;
   maxResearchQueries: number;
   maxResultsPerQuery: number;
   maxHydrationCandidates?: number;
+  totalBudgetMs?: number;
   searchProviders: string[];
 }
 
@@ -51,13 +53,25 @@ export class WeixinArticleResearchService {
       3,
       6,
     );
+    const deadlineAt = Date.now() + normalizeResearchBudget(
+      this.config.totalBudgetMs,
+    );
     const globalSignals = buildResearchSignals(input, topic);
     let hydrationAttempts = 0;
     const items: EvidenceItem[] = [];
     const gaps: string[] = [];
     const seenUrls = new Set<string>();
+    let startedQueries = 0;
 
     for (const query of queries) {
+      if (
+        startedQueries > 0 &&
+        Date.now() + MIN_RESEARCH_QUERY_BUDGET_MS > deadlineAt
+      ) {
+        gaps.push("补充研究达到总时间预算，已停止后续查询");
+        break;
+      }
+      startedQueries += 1;
       const failures: ArticleContentFetchFailure[] = [];
       const querySignals = [
         ...new Set([...globalSignals, ...tokenizeResearchSignal(query)]),
@@ -90,7 +104,8 @@ export class WeixinArticleResearchService {
           if (seenUrls.has(candidate.url)) continue;
           seenUrls.add(candidate.url);
 
-          const shouldHydrate = hydrationAttempts < maxHydrationCandidates &&
+          const shouldHydrate = Date.now() < deadlineAt &&
+            hydrationAttempts < maxHydrationCandidates &&
             shouldHydrateEvidenceCandidate(candidate);
           const evidenceContent = shouldHydrate
             ? await this.hydrateCandidate(candidate)
@@ -214,6 +229,11 @@ export class WeixinArticleResearchService {
       confidence: inferConfidence(sourceType),
     };
   }
+}
+
+function normalizeResearchBudget(value: number | undefined): number {
+  if (!Number.isFinite(value) || value === undefined) return 45_000;
+  return Math.max(1, Math.min(120_000, Math.floor(value)));
 }
 
 function createEmptyEvidencePack(

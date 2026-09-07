@@ -33,13 +33,21 @@ const SearchResponseSchema = z.union([
 
 type SearchResult = z.infer<typeof SearchResultSchema>;
 
+interface JinaSearchHttpClient {
+  request(
+    url: string,
+    options?: RequestInit & { timeout?: number; retries?: number },
+  ): Promise<unknown>;
+}
+
 export class JinaSearchScraper implements ContentScraper {
   private apiKey = "";
   private readonly searchApiUrl = "https://s.jina.ai/";
 
   constructor(
     private readonly configuredApiKey?: string,
-    private readonly httpClient = HttpClient.getInstance(),
+    private readonly httpClient: JinaSearchHttpClient = HttpClient
+      .getInstance(),
   ) {}
 
   async refresh(): Promise<void> {
@@ -62,7 +70,7 @@ export class JinaSearchScraper implements ContentScraper {
       throw new Error("Jina Search 查询词不能为空");
     }
 
-    const result = await this.httpClient.request<unknown>(
+    const result = await this.httpClient.request(
       `${this.searchApiUrl}?q=${encodeURIComponent(normalizedQuery)}`,
       {
         method: "GET",
@@ -70,9 +78,10 @@ export class JinaSearchScraper implements ContentScraper {
           "Authorization": `Bearer ${this.apiKey}`,
           "Accept": "application/json",
           "X-Respond-With": "no-content",
+          "X-Timeout": "15",
         },
-        retries: 2,
-        timeout: 45000,
+        retries: 1,
+        timeout: 15000,
       },
     );
 

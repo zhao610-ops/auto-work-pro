@@ -111,6 +111,26 @@ Deno.test("article research caps hydration attempts across queries", async () =>
   assertEquals(pack.items.length, 3);
 });
 
+Deno.test("article research stops starting queries after its total budget", async () => {
+  const fetcher = new DelayedEmptyFetcher();
+  const service = new WeixinArticleResearchService(fetcher, {
+    enabled: true,
+    maxResearchQueries: 3,
+    maxResultsPerQuery: 3,
+    totalBudgetMs: 25,
+    searchProviders: ["jina-search"],
+  });
+
+  const pack = await service.createEvidencePack({
+    topicReport: topicReportFixture(),
+    editorialDecision: decisionFixture(),
+    contents: contentFixtures(),
+  });
+
+  assertEquals(fetcher.calls, 1);
+  assertEquals(pack.gaps.some((gap) => gap.includes("总时间预算")), true);
+});
+
 class FakeFetcher implements ArticleContentFetcher {
   scrape(_source: ArticleSource): Promise<ArticleContentFetchResult> {
     return Promise.resolve({
@@ -234,6 +254,16 @@ class EmptyFetcher implements ArticleContentFetcher {
       failures: [],
       contents: [],
     });
+  }
+}
+
+class DelayedEmptyFetcher implements ArticleContentFetcher {
+  calls = 0;
+
+  async scrape(): Promise<ArticleContentFetchResult> {
+    this.calls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return { failures: [], contents: [] };
   }
 }
 

@@ -34,6 +34,7 @@ import {
   createAccountLearningSnapshot,
 } from "@src/features/weixin-article/services/account-learning-snapshot.ts";
 import type { ResolvedTrendPublishConfig } from "@src/utils/config/define-config.ts";
+import { hasDraftFallback } from "@src/features/weixin-article/services/article-draft.service.ts";
 
 const logger = new Logger("weixin-article-workflow");
 
@@ -875,12 +876,19 @@ export class WeixinArticleWorkflow {
           if (qualityGateDecision.bypassed) {
             logger.warn(`[发布保护] ${qualityGateDecision.reason}`);
           }
+          const draftedTemplateData = await artifactStore
+            .getJson<WeixinTemplate[]>(draftedTemplateDataRef);
+          const usedDraftFallback = hasDraftFallback(draftedTemplateData);
           const {
             publishMode: effectivePublishMode,
             downgradeReason,
           } = resolveArticlePublishMode(
             this.dependencies.config.publishMode,
             qualityGateDecision,
+            {
+              requiresDraft: usedDraftFallback,
+              reason: "AI 正文起草失败或章节不完整，使用了本地正文兜底",
+            },
           );
           if (downgradeReason) {
             logger.warn(`[发布保护] ${downgradeReason}`);
@@ -912,7 +920,13 @@ export class WeixinArticleWorkflow {
             artifacts: [dryRunPreviewRef, ref].filter(Boolean) as ArtifactRef[],
           };
         },
-        [finalHtmlSnapshotRef, finalTitleRef, coverRef, finalReviewRef],
+        [
+          finalHtmlSnapshotRef,
+          finalTitleRef,
+          coverRef,
+          finalReviewRef,
+          draftedTemplateDataRef,
+        ],
       );
       const publishResult = await artifactStore.getJson<PublishResult>(
         publishRef,

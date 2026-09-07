@@ -88,7 +88,15 @@ export function evaluateArticleQualityGate(
 export function resolveArticlePublishMode(
   configuredPublishMode: "draft" | "publish",
   qualityGateDecision: QualityGateDecision,
+  protection?: { requiresDraft: boolean; reason: string },
 ): ArticlePublishModeDecision {
+  if (protection?.requiresDraft && configuredPublishMode === "publish") {
+    return {
+      publishMode: "draft",
+      downgradeReason: `未自动公开发布，已保留草稿: ${protection.reason}`,
+    };
+  }
+
   if (configuredPublishMode === "draft" || qualityGateDecision.allowed) {
     return { publishMode: configuredPublishMode };
   }

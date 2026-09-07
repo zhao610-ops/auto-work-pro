@@ -11,6 +11,8 @@ const logger = new Logger("weixin-article-draft-service");
 
 interface RawArticleDraft {
   articles?: unknown;
+  data?: unknown;
+  result?: unknown;
   notes?: unknown;
 }
 
@@ -62,7 +64,9 @@ export class WeixinArticleDraftService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn(`[正文起草] AI 生成失败，使用本地正文兜底: ${message}`);
-      return templateData.map(sanitizeFallbackTemplateItem);
+      return templateData.map((item) =>
+        markDraftFallback(sanitizeFallbackTemplateItem(item), message)
+      );
     }
   }
 }
@@ -75,11 +79,12 @@ function normalizeDraft(
   raw: RawArticleDraft,
   fallback: WeixinTemplate[],
 ): WeixinTemplate[] {
-  if (!Array.isArray(raw.articles)) {
+  const articles = unwrapDraftArticles(raw);
+  if (!articles) {
     throw new Error("正文起草结果缺少 articles 数组");
   }
   const fallbackById = new Map(fallback.map((item) => [item.id, item]));
-  const drafted = raw.articles.flatMap((item) => {
+  const drafted = articles.flatMap((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return [];
     const record = item as RawDraftArticle;
     const id = stringValue(record.id);
@@ -99,8 +104,41 @@ function normalizeDraft(
 
   const draftedById = new Map(drafted.map((item) => [item.id, item]));
   return fallback.map((item) =>
-    draftedById.get(item.id) ?? sanitizeFallbackTemplateItem(item)
+    draftedById.get(item.id) ?? markDraftFallback(
+      sanitizeFallbackTemplateItem(item),
+      `AI 正文未返回章节 ${item.id}`,
+    )
   );
+}
+
+function unwrapDraftArticles(raw: RawArticleDraft): unknown[] | undefined {
+  if (Array.isArray(raw.articles)) return raw.articles;
+  for (const wrapper of [raw.data, raw.result]) {
+    if (!wrapper || typeof wrapper !== "object" || Array.isArray(wrapper)) {
+      continue;
+    }
+    const articles = (wrapper as { articles?: unknown }).articles;
+    if (Array.isArray(articles)) return articles;
+  }
+  return undefined;
+}
+
+function markDraftFallback(
+  item: WeixinTemplate,
+  reason: string,
+): WeixinTemplate {
+  return {
+    ...item,
+    metadata: {
+      ...item.metadata,
+      draftFallback: true,
+      draftFallbackReason: reason,
+    },
+  };
+}
+
+export function hasDraftFallback(items: WeixinTemplate[]): boolean {
+  return items.some((item) => item.metadata.draftFallback === true);
 }
 
 function normalizeContent(
@@ -170,6 +208,8 @@ function getDraftSystemPrompt(promptProfile?: PromptProfileName): string {
   return [
     "你是微信公众号资深编辑，负责把文章计划改写成读者可直接阅读的正文。",
     "输出必须是 JSON，不要 Markdown，不要解释。",
+    '根对象只能使用这个结构：{"articles":[{"id":"section-id","title":"章节标题","content":"正文"}]}。不能使用 data、result、sections 等其他顶层字段。',
+    "articles 数组必须覆盖输入中的全部章节，每个章节恰好出现一次，id 必须原样返回。",
     "只允许使用输入中的事实、来源摘要和章节要点。不能新增事实，不能把未披露的信息写成确定事实。",
     "章节标题、章节目标、写作角度、待核对编辑要点都只是编辑计划，不是事实证据。事实只能来自“可引用来源要点”和 sourceUrls 指向的材料。",
     "商业状态、定价、付费/免费、API 是否开放、deprecated/legacy、替代关系、发布时间、参数规格，只有来源明确写出时才能确定表述。",
@@ -188,6 +228,9 @@ function getDraftUserPrompt(
 ): string {
   return JSON.stringify({
     outputContract: {
+      rootField: "articles",
+      expectedArticleCount: templateData.length,
+      expectedArticleIds: templateData.map((item) => item.id),
       articles: [{
         id: "必须等于输入 section id",
         title: "可优化，但必须贴合章节",

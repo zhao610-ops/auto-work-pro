@@ -53,7 +53,30 @@ Deno.test("article draft service keeps unmatched sections as fallback", async ()
     }),
   );
 
-  assertEquals(result, source);
+  assertEquals(result[0].content, source[0].content);
+  assertEquals(result[0].metadata.draftFallback, true);
+});
+
+Deno.test("article draft service accepts a limited data wrapper", async () => {
+  const service = new WeixinArticleDraftService(createLlm(() =>
+    JSON.stringify({
+      data: {
+        articles: [{
+          id: "section-1",
+          title: "包装结构正文",
+          content: "这是兼容 data.articles 后得到的正文。",
+        }],
+      },
+    })
+  ));
+
+  const result = await service.draftTemplateData(
+    [template("section-1")],
+    plan({ format: "daily-brief" }),
+  );
+
+  assertEquals(result[0].title, "包装结构正文");
+  assertEquals(result[0].metadata.draftFallback, undefined);
 });
 
 Deno.test("article draft service sanitizes internal labels for unmatched sections", async () => {
@@ -80,6 +103,7 @@ Deno.test("article draft service sanitizes internal labels for unmatched section
   assertEquals(result[0].content.includes("章节目标"), false);
   assertEquals(result[0].content.includes("待核对编辑要点"), false);
   assertEquals(result[0].content.includes("Claude Opus 4.8"), true);
+  assertEquals(result[0].metadata.draftFallback, true);
 });
 
 Deno.test("article draft service sanitizes internal labels in model output", async () => {
@@ -206,6 +230,7 @@ Deno.test("article draft service sanitizes fallback when LLM fails", async () =>
   assertEquals(result[0].content.includes("章节目标"), false);
   assertEquals(result[0].content.includes("待核对编辑要点"), false);
   assertEquals(result[0].content.includes("Claude Opus 4.8"), true);
+  assertEquals(result[0].metadata.draftFallback, true);
 });
 
 function createLlm(content: () => string): LLMProvider {

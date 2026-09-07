@@ -200,6 +200,7 @@ export async function createWeixinArticleDependencies(
         enabled: researchSearchProviders.length > 0,
         maxResearchQueries: 3,
         maxResultsPerQuery: 3,
+        totalBudgetMs: 45_000,
         searchProviders: researchSearchProviders,
       },
     ),

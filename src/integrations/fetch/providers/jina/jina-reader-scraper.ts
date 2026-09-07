@@ -71,10 +71,11 @@ export class JinaScraper implements ContentScraper {
           headers: {
             "Authorization": `Bearer ${this.apiKey}`,
             "Accept": "application/json",
+            "X-Timeout": "15",
             // "X-With-Images-Summary": "true", // Example of an optional header
           },
           retries: 1,
-          timeout: 45000,
+          timeout: 15000,
         },
       );
 

@@ -176,3 +176,18 @@ Deno.test("publish mode downgrades a low-score article to a draft", () => {
     "未自动公开发布，已保留草稿: 质量分 79 低于门禁 80",
   );
 });
+
+Deno.test("draft fallback always downgrades public publishing to a draft", () => {
+  const resolution = resolveArticlePublishMode("publish", {
+    allowed: true,
+    bypassed: true,
+    action: "bypass",
+    reason: "forcePublish 已绕过质量门禁",
+  }, {
+    requiresDraft: true,
+    reason: "AI 正文起草失败，使用了本地正文兜底",
+  });
+
+  assertEquals(resolution.publishMode, "draft");
+  assertEquals(resolution.downgradeReason?.includes("AI 正文起草失败"), true);
+});

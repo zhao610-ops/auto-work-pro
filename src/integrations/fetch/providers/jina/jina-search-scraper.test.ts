@@ -3,13 +3,25 @@ import { JinaSearchScraper } from "@src/integrations/fetch/providers/jina/jina-s
 
 Deno.test("JinaSearchScraper converts search results into scraped contents", async () => {
   const scraper = new JinaSearchScraper("jina-key", {
-    request(input: string, init: RequestInit) {
+    request(
+      input: string,
+      init?: RequestInit & {
+        timeout?: number;
+        retries?: number;
+      },
+    ) {
       assertEquals(input, "https://s.jina.ai/?q=AI%20agent%20news");
-      assertEquals(init.method, "GET");
+      assertEquals(init?.method, "GET");
       assertEquals(
-        (init.headers as Record<string, string>)["Authorization"],
+        (init?.headers as Record<string, string>)["Authorization"],
         "Bearer jina-key",
       );
+      assertEquals(
+        (init?.headers as Record<string, string>)["X-Timeout"],
+        "15",
+      );
+      assertEquals(init?.timeout, 15000);
+      assertEquals(init?.retries, 1);
       return Promise.resolve({
         data: [{
           title: "Agent 新闻",
