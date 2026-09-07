@@ -237,6 +237,8 @@ export default defineConfig({
        */
       publisher: {
         provider: "weixin",
+        // "draft": 仅进入草稿箱；"publish": 质量达标后调用发布接口公开发布（不是群发）。
+        publishMode: "draft",
         // 多公众号发布目标。默认账号留空；使用 accounts 时填写 "main"、"lab" 等 accountId。
         accountId: "",
       },
@@ -341,8 +343,8 @@ export default defineConfig({
        * 第一性原则：不要把低质量文章发出去。
        * dry-run 永远不会被阻断，方便你观察选题、文章计划、HTML 和审稿结果。
        * 只有 dryRun=false 的真实发布会被门禁保护。
-       * 如果你希望生产环境“不达标也先发到草稿箱”，可以把 forcePublish 改为 true；
-       * 审稿和修订 artifact 仍会保留，方便事后复盘。
+       * publishMode="publish" 时，不达标文章会自动降级到草稿箱。
+       * forcePublish=true 会绕过门禁并直接公开发布，请谨慎使用。
        */
       qualityGate: {
         enabled: true,

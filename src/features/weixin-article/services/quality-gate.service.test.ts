@@ -1,6 +1,9 @@
 import { assertEquals } from "@std/assert";
 import type { ArticleQualityReview } from "@src/features/weixin-article/domain/quality-review.ts";
-import { evaluateArticleQualityGate } from "@src/features/weixin-article/services/quality-gate.service.ts";
+import {
+  evaluateArticleQualityGate,
+  resolveArticlePublishMode,
+} from "@src/features/weixin-article/services/quality-gate.service.ts";
 
 const baseConfig = {
   enabled: true,
@@ -8,6 +11,7 @@ const baseConfig = {
   blockOnHighFactIssue: true,
   forcePublish: false,
   allowForcePublish: true,
+  maxRevisionRounds: 1,
 };
 
 const baseReview: ArticleQualityReview = {
@@ -111,4 +115,64 @@ Deno.test("quality gate can be bypassed by config forcePublish", () => {
   assertEquals(decision.allowed, true);
   assertEquals(decision.bypassed, true);
   assertEquals(decision.reason.includes("配置项 forcePublish"), true);
+});
+
+Deno.test("quality gate never bypasses local compliance blockers", () => {
+  const decision = evaluateArticleQualityGate({
+    review: {
+      ...baseReview,
+      issues: [{
+        id: "compliance-gambling-promotion",
+        category: "risk",
+        severity: "blocker",
+        message: "正文包含赌博推广信息。",
+        suggestion: "删除相关内容。",
+        autoFixable: false,
+      }],
+    },
+    config: { ...baseConfig, forcePublish: true },
+    dryRun: false,
+    forcePublish: true,
+  });
+
+  assertEquals(decision.allowed, false);
+  assertEquals(decision.bypassed, false);
+  assertEquals(decision.reason.includes("不可绕过的合规问题"), true);
+});
+
+Deno.test("draft mode always keeps the article in the draft box", () => {
+  const resolution = resolveArticlePublishMode("draft", {
+    allowed: true,
+    bypassed: false,
+    action: "allow",
+    reason: "质量审稿通过",
+  });
+
+  assertEquals(resolution, { publishMode: "draft" });
+});
+
+Deno.test("publish mode directly publishes an article that passes the gate", () => {
+  const resolution = resolveArticlePublishMode("publish", {
+    allowed: true,
+    bypassed: false,
+    action: "allow",
+    reason: "质量审稿通过",
+  });
+
+  assertEquals(resolution, { publishMode: "publish" });
+});
+
+Deno.test("publish mode downgrades a low-score article to a draft", () => {
+  const resolution = resolveArticlePublishMode("publish", {
+    allowed: false,
+    bypassed: false,
+    action: "block",
+    reason: "质量分 79 低于门禁 80",
+  });
+
+  assertEquals(resolution.publishMode, "draft");
+  assertEquals(
+    resolution.downgradeReason,
+    "未自动公开发布，已保留草稿: 质量分 79 低于门禁 80",
+  );
 });

@@ -66,7 +66,7 @@ export class WeixinArticleQualityReviewService {
           ),
         },
       ];
-      return await createStructuredJsonCompletion<
+      const review = await createStructuredJsonCompletion<
         RawQualityReview,
         ArticleQualityReview
       >({
@@ -83,12 +83,143 @@ export class WeixinArticleQualityReviewService {
         maxAttempts: 2,
         normalize: (raw) => normalizeQualityReview(raw, false),
       });
+      return applyLocalComplianceReview(review, input, this.accountBrand);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn(`[质量审稿] AI 审稿失败，使用本地规则兜底: ${message}`);
-      return createFallbackQualityReview(input.html, message);
+      return applyLocalComplianceReview(
+        createFallbackQualityReview(input.html, message),
+        input,
+        this.accountBrand,
+      );
     }
   }
+}
+
+interface ComplianceRule {
+  id: string;
+  pattern: RegExp;
+  message: string;
+}
+
+const COMPLIANCE_RULES: ComplianceRule[] = [
+  {
+    id: "controlled-substance-trade",
+    pattern:
+      /(?:购买|出售|代购|供应|批发|交易).{0,16}(?:毒品|冰毒|海洛因|摇头丸)|(?:毒品|冰毒|海洛因|摇头丸).{0,16}(?:购买|出售|代购|供应|批发|交易)/iu,
+    message: "正文包含受管制物品的交易或引流信息。",
+  },
+  {
+    id: "gambling-promotion",
+    pattern:
+      /(?:博彩|赌博|赌场|下注|投注).{0,20}(?:开户链接|送彩金|稳赚|代理|投注入口|下注入口)/iu,
+    message: "正文包含赌博推广、开户链接或投注引流信息。",
+  },
+  {
+    id: "sexual-service-promotion",
+    pattern:
+      /(?:招嫖|卖淫|嫖娼|色情服务|成人视频).{0,20}(?:联系|加微信|购买|下载|入口|网址)/iu,
+    message: "正文包含色情服务或成人内容推广信息。",
+  },
+  {
+    id: "weapon-instructions",
+    pattern:
+      /(?:炸弹|爆炸物|枪支|武器).{0,24}(?:制作教程|制作方法|详细配方|购买渠道|交易渠道)/iu,
+    message: "正文包含武器或爆炸物的制作、购买指引。",
+  },
+  {
+    id: "fraud-instructions",
+    pattern:
+      /(?:刷单|跑分|洗钱|诈骗).{0,20}(?:教程|方法|渠道|平台|招募|兼职|获利)/iu,
+    message: "正文包含欺诈、洗钱或黑灰产操作指引。",
+  },
+  {
+    id: "illegal-financial-promotion",
+    pattern:
+      /(?:稳赚不赔|保本高收益|零风险高收益|内幕消息).{0,24}(?:立即|加入|购买|联系|开户|点击|投资|理财)/iu,
+    message: "正文包含违规金融承诺或投资引流信息。",
+  },
+];
+
+export function scanLocalComplianceIssues(
+  input: { title: string; html: string },
+  accountBrand?: JsonObject,
+): QualityIssue[] {
+  const text = normalizeComplianceText(`${input.title}\n${input.html}`);
+  const issues = COMPLIANCE_RULES.flatMap((rule) =>
+    rule.pattern.test(text)
+      ? [createComplianceIssue(rule.id, rule.message)]
+      : []
+  );
+  const forbiddenTopics = Array.isArray(accountBrand?.forbiddenTopics)
+    ? accountBrand.forbiddenTopics.filter((item): item is string =>
+      typeof item === "string" && item.trim().length >= 2
+    )
+    : [];
+  for (const topic of forbiddenTopics) {
+    if (!text.toLocaleLowerCase().includes(topic.trim().toLocaleLowerCase())) {
+      continue;
+    }
+    issues.push(createComplianceIssue(
+      `forbidden-topic-${issues.length + 1}`,
+      `正文命中账号禁区主题：${topic.trim()}。`,
+    ));
+  }
+  return issues.slice(0, 8);
+}
+
+function applyLocalComplianceReview(
+  review: ArticleQualityReview,
+  input: { title: string; html: string },
+  accountBrand?: JsonObject,
+): ArticleQualityReview {
+  const complianceIssues = scanLocalComplianceIssues(input, accountBrand);
+  if (!complianceIssues.length) return review;
+
+  const issues = [...complianceIssues, ...review.issues]
+    .filter((issue, index, all) =>
+      all.findIndex((candidate) => candidate.id === issue.id) === index
+    )
+    .slice(0, 8);
+  return {
+    ...review,
+    overallScore: Math.min(review.overallScore, 39),
+    allowPublish: false,
+    recommendedAction: "block",
+    summary:
+      `本地合规检查发现 ${complianceIssues.length} 个阻断问题。${review.summary}`,
+    dimensionScores: {
+      ...review.dimensionScores,
+      riskHandling: Math.min(review.dimensionScores.riskHandling, 20),
+    },
+    issues,
+    repairSuggestions: [
+      ...complianceIssues.map((issue) => issue.suggestion),
+      ...review.repairSuggestions,
+    ].slice(0, 8),
+  };
+}
+
+function createComplianceIssue(id: string, message: string): QualityIssue {
+  return {
+    id: `compliance-${id}`,
+    category: "risk",
+    severity: "blocker",
+    message,
+    suggestion:
+      "删除相关推广、交易、操作指引或禁区主题内容，重新审稿后再发布。",
+    autoFixable: false,
+  };
+}
+
+function normalizeComplianceText(value: string): string {
+  return value
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/giu, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/giu, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&(?:nbsp|amp|lt|gt|quot|#39);/giu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export function normalizeQualityReview(

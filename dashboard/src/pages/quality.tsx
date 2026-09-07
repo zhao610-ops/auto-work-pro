@@ -1559,11 +1559,7 @@ function QualityReviewWorkspace(
                 AI 审稿失败，已使用本地兜底：{review.error}
               </div>
             )}
-            {publishResult?.status === "blocked" && (
-              <div className="tp-danger mt-3 rounded-md border p-3 text-sm">
-                真实发布已被质量门禁拦截：{publishResult.reason ?? "质量未通过"}
-              </div>
-            )}
+            {publishResult && <PublishResultNotice result={publishResult} />}
           </div>
           <Button size="sm" onClick={() => onPreviewArtifact(artifact)}>
             <FileJson className="size-3.5" />
@@ -1671,6 +1667,35 @@ function QualityReviewWorkspace(
             </Card>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+function PublishResultNotice({ result }: { result: PublishArtifactResult }) {
+  const message = result.status === "published"
+    ? "文章已公开发布"
+    : result.status === "publishing"
+    ? "微信仍在发布处理中，可稍后到公众号后台确认"
+    : result.status === "draft"
+    ? result.reason ?? "文章已保存到公众号草稿箱"
+    : result.reason ?? `发布状态：${result.status}`;
+  const className = result.status === "publishing" || result.reason
+    ? "tp-warning"
+    : "tp-card-soft";
+
+  return (
+    <div className={`${className} mt-3 rounded-md border p-3 text-sm`}>
+      <span>{message}</span>
+      {result.url && (
+        <a
+          className="ml-2 underline"
+          href={result.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          查看文章
+        </a>
       )}
     </div>
   );

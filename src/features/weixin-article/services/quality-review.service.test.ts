@@ -89,6 +89,22 @@ function createService(content: string): WeixinArticleQualityReviewService {
   return new WeixinArticleQualityReviewService(llm);
 }
 
+function createServiceWithBrand(
+  content: string,
+  forbiddenTopics: string[],
+): WeixinArticleQualityReviewService {
+  const llm: LLMProvider = {
+    initialize: () => Promise.resolve(),
+    refresh: () => Promise.resolve(),
+    setModel: () => {},
+    createChatCompletion: () =>
+      Promise.resolve({ choices: [{ message: { content } }] }),
+  };
+  return new WeixinArticleQualityReviewService(llm, undefined, {
+    forbiddenTopics,
+  });
+}
+
 Deno.test("quality review service returns normalized AI review", async () => {
   const service = createService(JSON.stringify({
     overallScore: 88,
@@ -184,4 +200,69 @@ Deno.test("normalizeQualityReview synthesizes issue when action requires revisio
   assertEquals(review.issues[0].category, "fact");
   assertEquals(review.issues[0].autoFixable, true);
   assertEquals(review.recommendedAction, "revise");
+});
+
+Deno.test("quality review blocks explicit gambling promotion locally", async () => {
+  const service = createService(JSON.stringify({
+    overallScore: 95,
+    allowPublish: true,
+    recommendedAction: "publish",
+    issues: [],
+  }));
+  const review = await service.reviewArticle({
+    title: "活动介绍",
+    html: "<section><p>博彩送彩金，点击投注平台开户链接。</p></section>",
+    articlePlan,
+    topicReport,
+    contents,
+  });
+
+  assertEquals(review.allowPublish, false);
+  assertEquals(review.recommendedAction, "block");
+  assertEquals(review.issues[0].id, "compliance-gambling-promotion");
+});
+
+Deno.test("quality review does not block neutral risk reporting", async () => {
+  const service = createService(JSON.stringify({
+    overallScore: 88,
+    allowPublish: true,
+    recommendedAction: "publish",
+    issues: [],
+  }));
+  const review = await service.reviewArticle({
+    title: "监管部门整治网络赌博",
+    html:
+      "<section><p>报道分析了监管部门打击网络赌博的最新行动。</p></section>",
+    articlePlan,
+    topicReport,
+    contents,
+  });
+
+  assertEquals(review.allowPublish, true);
+  assertEquals(review.issues.length, 0);
+});
+
+Deno.test("quality review blocks configured forbidden topic", async () => {
+  const service = createServiceWithBrand(
+    JSON.stringify({
+      overallScore: 90,
+      allowPublish: true,
+      recommendedAction: "publish",
+      issues: [],
+    }),
+    ["虚拟币荐币"],
+  );
+  const review = await service.reviewArticle({
+    title: "虚拟币荐币服务观察",
+    html: "<section><p>正文</p></section>",
+    articlePlan,
+    topicReport,
+    contents,
+  });
+
+  assertEquals(review.allowPublish, false);
+  assertEquals(
+    review.issues[0].id.startsWith("compliance-forbidden-topic-"),
+    true,
+  );
 });

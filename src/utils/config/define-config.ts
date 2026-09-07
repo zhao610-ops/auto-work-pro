@@ -29,6 +29,7 @@ export type FetchProviderName =
   | "rss";
 
 export type ArticlePublisherProvider = "weixin" | "weixin-relay";
+export type ArticlePublishMode = "draft" | "publish";
 export type ArticleImageProvider = "dashscope" | "minimax";
 export type ArticleEmbeddingProvider = "dashscope";
 export type ArticleVectorStoreProvider = "sqlite" | "d1";
@@ -258,6 +259,8 @@ export interface ArticleRendererConfig {
 export interface ArticlePublisherConfig {
   /** 文章工作流使用的发布 provider。本地固定 IP 可用 "weixin"，Cloudflare 推荐 "weixin-relay"。 */
   provider?: ArticlePublisherProvider;
+  /** draft 只保存草稿；publish 在质量达标后自动公开发布，但不会群发。 */
+  publishMode?: ArticlePublishMode;
   /**
    * 发布目标公众号账号 ID。
    *
@@ -597,6 +600,7 @@ export interface ResolvedTrendPublishConfig {
       };
       publisher: {
         provider: ArticlePublisherProvider;
+        publishMode: ArticlePublishMode;
         accountId: string;
       };
       count: number;
@@ -895,6 +899,7 @@ export function resolveTrendPublishConfig(
         },
         publisher: {
           provider: articlePublisher.provider ?? "weixin",
+          publishMode: articlePublisher.publishMode ?? "draft",
           accountId: articlePublisher.accountId ?? "",
         },
         count: article.count ?? 10,

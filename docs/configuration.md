@@ -369,7 +369,16 @@ providers: {
     },
   },
 },
-features: { article: { publisher: { provider: "weixin" }, dryRun: false } },
+features: {
+  article: {
+    publisher: {
+      provider: "weixin",
+      // draft 仅保存草稿；publish 达标后公开发布，不会执行群发。
+      publishMode: "draft",
+    },
+    dryRun: false,
+  },
+},
 ```
 
 运行：
@@ -500,11 +509,13 @@ features: {
 
 质量门禁默认开启，并且只保护真实发布。`dryRun: true` 时仍会完整产出
 HTML、文章计划和质量审稿 artifact，方便先观察质量；`dryRun: false`
-时，如果审稿分低于 `minScore`、审稿建议不是 `publish`、存在 blocker
-或高危事实问题，默认会写入 `blocked` 发布结果，不会创建微信草稿。 如果把
-`forcePublish` 配成 `true`，真实发布即使质量不达标也会继续创建微信草稿， 只记录
-warning 和质量审稿 artifact。 `maxRevisionRounds` 控制自动修复轮次，建议保持
-`1`：只修 reviewer
+时，`publisher.publishMode: "draft"` 只创建草稿；配置为 `"publish"` 后，只有审稿
+分数大于等于 `minScore`、审稿建议为 `publish` 且不存在 blocker
+或高危事实问题时，
+才会调用微信发布接口公开发布。未达标的文章不会丢失，而是自动降级保存到草稿箱，
+并在发布结果中记录原因。这里的公开发布不是群发，不会向关注者推送群发消息。
+如果把 `forcePublish` 配成 `true`，会绕过质量门禁并直接公开发布，请谨慎使用。
+`maxRevisionRounds` 控制自动修复轮次，建议保持 `1`：只修 reviewer
 指出的可安全自动修复问题，修完会复审一次，再决定最终发布结果。
 
 ### 8. 开启工作流通知

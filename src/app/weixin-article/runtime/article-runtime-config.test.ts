@@ -136,6 +136,37 @@ Deno.test("runtime config resolves capability references and feature overrides",
   assertEquals(resolved.snapshot.profile?.["id"], detail.profile.id);
 });
 
+Deno.test("runtime config persists publish mode and automatic publish score", async () => {
+  const store = new SQLiteRuntimeConfigStore(":memory:");
+  const config = createConfig();
+  await seedArticleRuntimeConfig(store, config);
+
+  const detail = await getArticleRuntimeProfileDetail(store, config);
+  await saveArticleProfileConfig(store, config, detail.profile.id, {
+    publisher: {
+      ...detail.article.publisher,
+      publishMode: "publish",
+    },
+    qualityGate: {
+      ...detail.article.qualityGate,
+      enabled: true,
+      minScore: 86,
+    },
+  });
+
+  const resolved = await resolveArticleRuntimeConfig(
+    store,
+    config,
+    detail.profile.id,
+  );
+
+  assertEquals(
+    resolved.config.features.article.publisher.publishMode,
+    "publish",
+  );
+  assertEquals(resolved.config.features.article.qualityGate.minScore, 86);
+});
+
 Deno.test("runtime config resolves MiniMax image capability provider", async () => {
   const store = new SQLiteRuntimeConfigStore(":memory:");
   const config = createConfig();

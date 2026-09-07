@@ -49,6 +49,7 @@ Deno.test("resolveTrendPublishConfig returns typed resolved config", () => {
       article: {
         publisher: {
           provider: "weixin",
+          publishMode: "publish",
         },
         renderer: {
           template: "dynamic",
@@ -98,6 +99,7 @@ Deno.test("resolveTrendPublishConfig returns typed resolved config", () => {
   assertEquals(config.providers.ai.timeoutMs, 240000);
   assertEquals(config.providers.ai.maxAttempts, 3);
   assertEquals(config.features.article.publisher.provider, "weixin");
+  assertEquals(config.features.article.publisher.publishMode, "publish");
   assertEquals(config.features.article.publisher.accountId, "");
   assertEquals(config.features.article.renderer.template, "dynamic");
   assertEquals(config.features.article.renderer.promptProfile, "business");
@@ -194,6 +196,7 @@ Deno.test("resolveTrendPublishConfig uses feature defaults without provider enab
   const config = resolveTrendPublishConfig(defineConfig({}));
 
   assertEquals(config.features.article.renderer.template, "minimal");
+  assertEquals(config.features.article.publisher.publishMode, "draft");
   assertEquals(config.features.article.renderer.promptProfile, "technology");
   assertEquals(config.features.article.deduplication.enabled, false);
   assertEquals(config.features.article.deduplication.vectorStore, "sqlite");

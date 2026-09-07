@@ -27,6 +27,7 @@ const TEST_FILES = [
   "src/platform/local/sqlite-editorial-memory-store.test.ts",
   "src/integrations/vector/sqlite-vector-store.test.ts",
   "src/integrations/publish/providers/weixin-api-client.test.ts",
+  "src/integrations/publish/providers/weixin-publisher.publish.test.ts",
   "src/integrations/image/providers/minimax/minimax-image-generator.test.ts",
   "src/integrations/fetch/providers/jina/jina-search-scraper.test.ts",
   "src/utils/image/safe-image-downloader.test.ts",

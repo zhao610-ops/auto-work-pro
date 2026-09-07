@@ -48,6 +48,7 @@ Deno.test("WeixinRelayPublisher forwards selected account credentials", async ()
     digest: "摘要",
     content: "<section>正文</section>",
     coverMediaId: "cover-id",
+    publishMode: "publish",
   });
 
   assertEquals(capturedBody?.account, {
@@ -63,6 +64,7 @@ Deno.test("WeixinRelayPublisher forwards selected account credentials", async ()
     digest: "摘要",
     content: "<section>正文</section>",
     coverMediaId: "cover-id",
+    publishMode: "publish",
   });
   assertEquals(result.accountId, "lab");
   assertEquals(result.publishedAt instanceof Date, true);

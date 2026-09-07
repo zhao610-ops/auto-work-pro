@@ -85,6 +85,7 @@ export class WeixinRelayPublisher
     const result = await this.request<PublishResult>(
       "/api/weixin/publish",
       request,
+      300000,
     );
     return {
       ...result,
@@ -92,7 +93,11 @@ export class WeixinRelayPublisher
     };
   }
 
-  private async request<T>(path: string, body: unknown): Promise<T> {
+  private async request<T>(
+    path: string,
+    body: unknown,
+    timeout = 30000,
+  ): Promise<T> {
     const baseUrl = this.relayConfig.url.replace(/\/+$/, "");
     if (!baseUrl) {
       throw new Error("providers.publish.weixinRelay.url is not configured");
@@ -116,7 +121,7 @@ export class WeixinRelayPublisher
             payload: body,
           }),
           retries: 1,
-          timeout: 30000,
+          timeout,
         },
       );
     } catch (error) {

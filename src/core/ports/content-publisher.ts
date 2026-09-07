@@ -18,10 +18,14 @@ export interface PublishArticleRequest {
   title: string;
   digest: string;
   coverMediaId: string;
+  /** draft 只保存草稿；publish 会在创建草稿后提交微信发布。 */
+  publishMode?: "draft" | "publish";
 }
 
 export interface PublishResult {
   publishId: string;
+  draftMediaId?: string;
+  articleId?: string;
   url?: string;
   status: PublishStatus;
   publishedAt: Date;
@@ -35,5 +39,6 @@ export type PublishStatus =
   | "published"
   | "failed"
   | "draft"
+  | "publishing"
   | "scheduled"
   | "blocked";

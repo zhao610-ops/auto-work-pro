@@ -3,7 +3,7 @@
 TrendPublish
 是一个面向微信公众号的自动化选题与发布系统。它从你指定的数据源中抓取内容，用 AI
 做选题、证据补全、排序、标题、正文生成、审稿、排版和配图，最后生成可预览的
-dry-run 产物或创建微信公众号草稿。
+dry-run 产物、创建微信公众号草稿，或在质量达标后自动公开发布文章。
 
 它不是一个简单的 RSS
 摘要脚本，而是一条可观察、可回滚、可调参的文章生产流水线：每次运行都会留下步骤、错误、质量审稿、HTML、图片和配置快照，方便你复盘为什么这篇文章值得发，以及哪里需要人工介入。
@@ -99,9 +99,13 @@ flowchart LR
   H --> I["微信兼容 HTML"]
   I --> J{"dry-run?"}
   J -->|是| K["保存 HTML / JSON / 图片产物"]
-  J -->|否| L["上传素材并创建微信草稿"]
+  J -->|否| L{"发布目标"}
+  L -->|仅草稿| N["创建微信草稿"]
+  L -->|自动发布且达标| O["创建草稿并公开发布"]
+  L -->|自动发布但未达标| N
   K --> M["Dashboard 复盘"]
-  L --> M
+  N --> M
+  O --> M
 ```
 
 ## 快速开始
@@ -244,6 +248,8 @@ features: {
 | 页面改配置     | `storage.runtimeConfig`                   | Dashboard 保存 Profile、数据源、抓取分组和定时规则，下一次运行生效           |
 | 接入日志观测   | `observability`                           | 所有 `Logger` 输出可镜像到 stdout、Axiom、Better Stack 或 HTTP ingest        |
 | 正式发布微信   | `features.article.dryRun: false`          | 本地固定 IP 用 `weixin`，Cloudflare 推荐 `weixin-relay`                      |
+| 选择发布目标   | `features.article.publisher.publishMode`  | `draft` 仅保存草稿；`publish` 达标后公开发布，不执行群发                     |
+| 设置发布分数   | `features.article.qualityGate.minScore`   | 自动公开发布的最低质量分；未达标文章自动保留为草稿                           |
 | 多公众号发布   | `features.article.publisher.accountId`    | 对应 `providers.publish.weixin.accounts` 的账号 ID；relay 只做凭证透传代理   |
 | 矩阵运营       | Dashboard `账号矩阵`                      | 编辑账号定位、默认方案和来源分组，运行后展示账号级质量趋势、风险和学习建议   |
 

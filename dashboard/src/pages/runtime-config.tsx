@@ -280,6 +280,11 @@ function articleDraftFromConfig(
       ["publisher", "provider"],
       "weixin-relay",
     ),
+    publisherPublishMode: readString(
+      article,
+      ["publisher", "publishMode"],
+      "draft",
+    ),
     publisherAccountId: readString(article, ["publisher", "accountId"], ""),
     coverEnabled: readBoolean(article, ["cover", "enabled"], false),
     coverImageProfileId: readString(article, ["cover", "imageProfileId"], "") ||
@@ -345,6 +350,7 @@ function articlePatchFromDraft(draft: ArticleFormDraft) {
     },
     publisher: {
       provider: draft.publisherProvider,
+      publishMode: draft.publisherPublishMode,
       accountId: draft.publisherAccountId.trim(),
     },
     cover: {
@@ -435,7 +441,7 @@ function TrendProfileView(
             />
           </label>
           <label className="space-y-1.5">
-            <span className="tp-muted text-xs font-medium">发布方式</span>
+            <span className="tp-muted text-xs font-medium">发布通道</span>
             <Select
               value={draft.publisherProvider}
               onChange={(event) =>
@@ -443,6 +449,17 @@ function TrendProfileView(
             >
               <option value="weixin-relay">微信 Relay</option>
               <option value="weixin">直连微信</option>
+            </Select>
+          </label>
+          <label className="space-y-1.5">
+            <span className="tp-muted text-xs font-medium">发布目标</span>
+            <Select
+              value={draft.publisherPublishMode}
+              onChange={(event) =>
+                update("publisherPublishMode", event.currentTarget.value)}
+            >
+              <option value="draft">仅保存到草稿箱</option>
+              <option value="publish">质量达标后直接发布</option>
             </Select>
           </label>
           <label className="space-y-1.5">
@@ -678,7 +695,7 @@ function TrendProfileView(
                   真实发布质量门禁
                 </span>
                 <span className="tp-muted block text-xs leading-5">
-                  dry-run 继续产出，创建微信草稿前才会按审稿结果拦截。
+                  仅控制自动公开发布；未达标的文章仍会安全保留为草稿。
                 </span>
               </span>
               <input
@@ -691,13 +708,16 @@ function TrendProfileView(
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <label className="space-y-1.5">
-                <span className="tp-muted text-xs font-medium">最低分</span>
+                <span className="tp-muted text-xs font-medium">
+                  最低自动发布分数
+                </span>
                 <Input
                   type="number"
                   min="0"
                   max="100"
                   value={draft.qualityGateMinScore}
-                  disabled={!draft.qualityGateEnabled}
+                  disabled={!draft.qualityGateEnabled ||
+                    draft.publisherPublishMode !== "publish"}
                   onChange={(event) =>
                     update("qualityGateMinScore", event.currentTarget.value)}
                 />

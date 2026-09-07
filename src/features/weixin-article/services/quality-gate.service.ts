@@ -8,6 +8,11 @@ export interface QualityGateDecision {
   action: "allow" | "allow-dry-run" | "bypass" | "disabled" | "block";
 }
 
+export interface ArticlePublishModeDecision {
+  publishMode: "draft" | "publish";
+  downgradeReason?: string;
+}
+
 export type ArticleQualityGateConfig =
   ResolvedTrendPublishConfig["features"]["article"]["qualityGate"];
 
@@ -34,6 +39,18 @@ export function evaluateArticleQualityGate(
       bypassed: false,
       action: "disabled",
       reason: "质量门禁未启用",
+    };
+  }
+
+  const complianceBlocker = input.review.issues.find((issue) =>
+    issue.severity === "blocker" && issue.id.startsWith("compliance-")
+  );
+  if (complianceBlocker) {
+    return {
+      allowed: false,
+      bypassed: false,
+      action: "block",
+      reason: `存在不可绕过的合规问题: ${complianceBlocker.message}`,
     };
   }
 
@@ -65,6 +82,21 @@ export function evaluateArticleQualityGate(
     bypassed: false,
     action: "block",
     reason: blockReason,
+  };
+}
+
+export function resolveArticlePublishMode(
+  configuredPublishMode: "draft" | "publish",
+  qualityGateDecision: QualityGateDecision,
+): ArticlePublishModeDecision {
+  if (configuredPublishMode === "draft" || qualityGateDecision.allowed) {
+    return { publishMode: configuredPublishMode };
+  }
+
+  return {
+    publishMode: "draft",
+    downgradeReason:
+      `未自动公开发布，已保留草稿: ${qualityGateDecision.reason}`,
   };
 }
 

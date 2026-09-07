@@ -357,6 +357,7 @@ export interface ArticleFormDraft {
   promptProfile: string;
   llmProfileId: string;
   publisherProvider: string;
+  publisherPublishMode: string;
   publisherAccountId: string;
   coverEnabled: boolean;
   coverImageProfileId: string;
@@ -609,6 +610,8 @@ export interface PublishArtifactResult {
   platform: string;
   url?: string;
   reason?: string;
+  draftMediaId?: string;
+  articleId?: string;
 }
 
 export interface ApiErrorPayload {

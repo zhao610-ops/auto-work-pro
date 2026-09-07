@@ -94,6 +94,7 @@ Deno.serve({ port }, async (request) => {
         title: payload.title,
         digest: payload.digest,
         coverMediaId: payload.coverMediaId,
+        publishMode: payload.publishMode,
       });
       return ok(result);
     }

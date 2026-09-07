@@ -221,6 +221,7 @@ export async function createWeixinArticleDependencies(
     },
     config: {
       dryRun: config.features.article.dryRun,
+      publishMode: config.features.article.publisher.publishMode,
       profileId: options.profileId,
       accountId: effectiveAccountId,
       accountBrand,

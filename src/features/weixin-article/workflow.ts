@@ -25,7 +25,7 @@ import type { EvidencePack } from "@src/features/weixin-article/domain/evidence.
 import type { EditorialMemoryContext } from "@src/core/ports/editorial-memory-store.ts";
 import {
   evaluateArticleQualityGate,
-  type QualityGateDecision,
+  resolveArticlePublishMode,
 } from "@src/features/weixin-article/services/quality-gate.service.ts";
 import {
   alignArticleContentsForPlan,
@@ -58,6 +58,7 @@ interface WeixinWorkflowParams {
 
 export interface WeixinArticleWorkflowConfig {
   dryRun: boolean;
+  publishMode: "draft" | "publish";
   profileId?: string;
   accountId?: string;
   accountBrand?: JsonObject;
@@ -835,7 +836,8 @@ export class WeixinArticleWorkflow {
         runId,
         "publish-article",
         {
-          retries: { limit: 3, delay: "10 second", backoff: "exponential" },
+          // 草稿创建和公开发布都不是天然幂等操作，避免步骤级重试造成重复文章。
+          retries: { limit: 0, delay: "10 second", backoff: "exponential" },
           timeout: "5 minutes",
         },
         async () => {
@@ -873,9 +875,16 @@ export class WeixinArticleWorkflow {
           if (qualityGateDecision.bypassed) {
             logger.warn(`[发布保护] ${qualityGateDecision.reason}`);
           }
-          const blockedPublishResult = !qualityGateDecision.allowed
-            ? createBlockedPublishResult(qualityGateDecision)
-            : undefined;
+          const {
+            publishMode: effectivePublishMode,
+            downgradeReason,
+          } = resolveArticlePublishMode(
+            this.dependencies.config.publishMode,
+            qualityGateDecision,
+          );
+          if (downgradeReason) {
+            logger.warn(`[发布保护] ${downgradeReason}`);
+          }
           const publishResult = dryRun
             ? {
               publishId: "dry-run",
@@ -884,13 +893,15 @@ export class WeixinArticleWorkflow {
               platform: "weixin",
               url: dryRunPreviewRef?.key,
             }
-            : blockedPublishResult
-            ? blockedPublishResult
-            : await this.publishArticle(
-              renderedTemplate,
-              finalTitle,
-              mediaId,
-            );
+            : {
+              ...await this.publishArticle(
+                renderedTemplate,
+                finalTitle,
+                mediaId,
+                effectivePublishMode,
+              ),
+              ...(downgradeReason ? { reason: downgradeReason } : {}),
+            };
           const ref = await artifactStore.putJson(
             publishResultKey,
             publishResult,
@@ -949,8 +960,11 @@ export class WeixinArticleWorkflow {
 
       logger.info(`[工作流完成] ${summary}`);
 
-      if (publishResult.status === "blocked") {
-        await this.dependencies.notifier.warning("发布被质量门禁拦截", summary);
+      if (publishResult.status === "draft" && publishResult.reason) {
+        await this.dependencies.notifier.warning(
+          "自动发布已降级为草稿",
+          summary,
+        );
       } else if (this.dependencies.stats.failed > 0) {
         await this.dependencies.notifier.warning(
           "工作流完成(部分失败)",
@@ -1026,13 +1040,19 @@ export class WeixinArticleWorkflow {
     renderedTemplate: string,
     summaryTitle: string,
     mediaId: string,
+    publishMode: "draft" | "publish",
   ): Promise<PublishResult> {
-    logger.info("[发布] 发布到微信公众号");
+    logger.info(
+      publishMode === "publish"
+        ? "[发布] 创建草稿并自动公开发布"
+        : "[发布] 保存到微信公众号草稿箱",
+    );
     return await this.dependencies.publisher.publishArticle({
       content: renderedTemplate,
       title: summaryTitle,
       digest: summaryTitle,
       coverMediaId: mediaId,
+      publishMode,
     });
   }
 
@@ -1157,22 +1177,12 @@ function qualityActionRank(
   }
 }
 
-function createBlockedPublishResult(
-  decision: QualityGateDecision,
-): PublishResult {
-  return {
-    publishId: "blocked",
-    status: "blocked",
-    publishedAt: new Date(),
-    platform: "weixin",
-    reason: decision.reason,
-  };
-}
-
 function formatPublishSummary(result: PublishResult, dryRun: boolean): string {
   if (dryRun) return "DryRun(未发布)";
-  if (result.status === "blocked") {
-    return `被质量门禁拦截${result.reason ? `: ${result.reason}` : ""}`;
+  if (result.status === "draft") {
+    return result.reason ? `已保存草稿（${result.reason}）` : "已保存草稿";
   }
-  return "成功";
+  if (result.status === "publishing") return "已提交公开发布，微信处理中";
+  if (result.status === "published") return "已公开发布（未群发）";
+  return result.status;
 }

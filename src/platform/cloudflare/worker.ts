@@ -724,6 +724,7 @@ async function handlePublishExistingRunRequest(
       title,
       digest: title,
       coverMediaId,
+      publishMode: config.features.article.publisher.publishMode,
     });
     const publishRef = await artifactStore.putJson(publishKey, result, {
       label: "发布结果",

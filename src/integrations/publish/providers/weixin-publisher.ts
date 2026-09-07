@@ -30,6 +30,29 @@ interface WeixinDraft {
   article_id?: string;
 }
 
+interface WeixinPublishSubmitResponse {
+  publish_id: string | number;
+}
+
+interface WeixinPublishedArticleItem {
+  article_url?: string;
+}
+
+interface WeixinPublishStatusResponse {
+  publish_id?: string | number;
+  publish_status: number;
+  article_id?: string;
+  article_detail?: {
+    item?: WeixinPublishedArticleItem[];
+  };
+}
+
+export interface WeixinPublisherOptions {
+  publishStatusPollIntervalMs?: number;
+  publishStatusTimeoutMs?: number;
+  sleep?: (milliseconds: number) => Promise<void>;
+}
+
 interface WeixinMaterialImageResponse {
   media_id: string;
 }
@@ -54,6 +77,9 @@ export class WeixinPublisher implements ContentPublisher, ContentImageUploader {
   private accessToken: WeixinToken | null = null;
   private appId: string | undefined;
   private appSecret: string | undefined;
+  private readonly publishStatusPollIntervalMs: number;
+  private readonly publishStatusTimeoutMs: number;
+  private readonly sleep: (milliseconds: number) => Promise<void>;
 
   constructor(
     private readonly configuredProvider?: ResolvedTrendPublishConfig[
@@ -62,7 +88,15 @@ export class WeixinPublisher implements ContentPublisher, ContentImageUploader {
     private readonly accountId?: string,
     private readonly apiClient = new WeixinApiClient(),
     private readonly imageDownloader = new SafeImageDownloader(),
-  ) {}
+    options: WeixinPublisherOptions = {},
+  ) {
+    this.publishStatusPollIntervalMs = options.publishStatusPollIntervalMs ??
+      5000;
+    this.publishStatusTimeoutMs = options.publishStatusTimeoutMs ?? 240000;
+    this.sleep = options.sleep ??
+      ((milliseconds) =>
+        new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  }
 
   async refresh(): Promise<void> {
     const provider = this.getProvider();
@@ -147,6 +181,54 @@ export class WeixinPublisher implements ContentPublisher, ContentImageUploader {
       logger.error("上传微信草稿失败:", redactError(error));
       throw error;
     }
+  }
+
+  private async submitDraft(mediaId: string): Promise<string> {
+    const token = await this.ensureAccessToken();
+    const response = await this.apiClient.postJson<WeixinPublishSubmitResponse>(
+      "/cgi-bin/freepublish/submit",
+      token,
+      { media_id: mediaId },
+    );
+    const publishId = String(response.publish_id ?? "").trim();
+    if (!publishId) {
+      throw new ProviderError({
+        provider: "weixin",
+        kind: "invalid_response",
+        message: "微信发布接口未返回 publish_id",
+      });
+    }
+    return publishId;
+  }
+
+  private async getPublishStatus(
+    publishId: string,
+  ): Promise<WeixinPublishStatusResponse> {
+    const token = await this.ensureAccessToken();
+    return await this.apiClient.postJson<WeixinPublishStatusResponse>(
+      "/cgi-bin/freepublish/get",
+      token,
+      { publish_id: publishId },
+    );
+  }
+
+  private async waitForPublishResult(
+    publishId: string,
+  ): Promise<WeixinPublishStatusResponse | null> {
+    const deadline = Date.now() + this.publishStatusTimeoutMs;
+    while (Date.now() < deadline) {
+      const status = await this.getPublishStatus(publishId);
+      if (status.publish_status === 0) return status;
+      if (status.publish_status !== 1) {
+        throw new ProviderError({
+          provider: "weixin",
+          kind: "invalid_response",
+          message: describePublishFailure(status.publish_status),
+        });
+      }
+      await this.sleep(this.publishStatusPollIntervalMs);
+    }
+    return null;
   }
   /**
    * 上传图片到微信
@@ -279,13 +361,42 @@ export class WeixinPublisher implements ContentPublisher, ContentImageUploader {
         request.digest,
         request.coverMediaId,
       );
+      if ((request.publishMode ?? "draft") === "draft") {
+        return {
+          publishId: draft.media_id,
+          draftMediaId: draft.media_id,
+          status: "draft",
+          publishedAt: new Date(),
+          platform: "weixin",
+          accountId: account.accountId,
+        };
+      }
+
+      const publishId = await this.submitDraft(draft.media_id);
+      const status = await this.waitForPublishResult(publishId);
+      if (!status) {
+        return {
+          publishId,
+          draftMediaId: draft.media_id,
+          status: "publishing",
+          publishedAt: new Date(),
+          platform: "weixin",
+          accountId: account.accountId,
+          reason: "微信发布任务仍在处理中，可稍后查询发布状态",
+        };
+      }
+      const url = status.article_detail?.item?.find((item) =>
+        Boolean(item.article_url)
+      )?.article_url;
       return {
-        publishId: draft.media_id,
-        status: "draft",
+        publishId,
+        draftMediaId: draft.media_id,
+        articleId: status.article_id,
+        status: "published",
         publishedAt: new Date(),
         platform: "weixin",
         accountId: account.accountId,
-        url: `https://mp.weixin.qq.com/s/${draft.media_id}`,
+        url,
       };
     } catch (error) {
       logger.error("微信发布失败:", redactError(error));
@@ -335,6 +446,17 @@ export class WeixinPublisher implements ContentPublisher, ContentImageUploader {
   private getProvider(): ResolvedWeixinPublishAccountConfig {
     return this.getAccount().provider;
   }
+}
+
+function describePublishFailure(status: number): string {
+  const descriptions: Record<number, string> = {
+    2: "微信发布失败：原创校验失败",
+    3: "微信发布失败：常规发布失败",
+    4: "微信发布失败：平台审核未通过",
+    5: "微信发布失败：文章已被用户删除",
+    6: "微信发布失败：文章被平台封禁",
+  };
+  return descriptions[status] ?? `微信发布失败：未知状态 ${status}`;
 }
 
 function maskSecret(value: string | undefined): string {

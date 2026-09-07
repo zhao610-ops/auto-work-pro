@@ -35,6 +35,7 @@ export interface ArticleFeatureProfileConfig {
   };
   publisher: {
     provider: "weixin" | "weixin-relay";
+    publishMode: "draft" | "publish";
     accountId?: string;
   };
   cover: {

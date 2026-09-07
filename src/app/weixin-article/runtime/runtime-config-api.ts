@@ -681,6 +681,12 @@ async function validateArticlePatch(
       ["weixin", "weixin-relay"],
       issues,
     );
+    validateStringEnum(
+      publisher.publishMode,
+      "article.publisher.publishMode",
+      ["draft", "publish"],
+      issues,
+    );
     validateOptionalAccountId(
       publisher.accountId,
       "article.publisher.accountId",

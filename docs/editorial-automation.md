@@ -143,10 +143,12 @@ dedup-contents -> plan-editorial-topics -> rank-contents
 
 - 已加入最小质量门禁 `features.article.qualityGate`。
 - 默认开启，只保护真实发布；dry-run 永远继续产出。
-- 低于 `minScore`、审稿建议不是 `publish`、存在 blocker
-  或高危事实问题时，真实发布会写入 `blocked` 发布结果，不会创建微信草稿。
-- `qualityGate.forcePublish` 可在 Dashboard 或 TS 配置中开启；开启后真实发布即使
-  不达标也会创建草稿，但会记录 warning 和审稿 artifact。
+- `publisher.publishMode: "draft"` 只保存草稿；设置为 `"publish"` 后，质量达标会
+  自动公开发布（不是群发）。
+- 低于 `minScore`、审稿建议不是 `publish`、存在 blocker 或高危事实问题时，
+  自动公开发布会安全降级为草稿，并记录原因。
+- `qualityGate.forcePublish` 可在 Dashboard 或 TS 配置中开启；开启后会绕过门禁并
+  直接公开发布，请谨慎使用。
 - `maxRevisionRounds` 控制自动修复轮次，默认 1，建议不要超过 2。
 - 抓取阶段会额外输出 `source-health` artifact，Dashboard 的 Sources
   页面会展示每个数据源的成功、空结果和失败原因，方便先处理输入质量。

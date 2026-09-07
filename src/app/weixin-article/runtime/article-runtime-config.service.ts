@@ -366,6 +366,7 @@ export async function resolveArticleRuntimeConfig(
   };
   next.features.article.publisher = {
     provider: article.publisher.provider,
+    publishMode: article.publisher.publishMode,
     accountId: article.publisher.accountId ?? "",
   };
 
@@ -581,6 +582,7 @@ export function defaultArticleProfileConfig(
     },
     publisher: {
       provider: article.publisher.provider,
+      publishMode: article.publisher.publishMode,
       accountId: article.publisher.accountId,
     },
     cover: {
@@ -649,6 +651,10 @@ export function readArticleConfig(
     },
     publisher: {
       provider: readPublisher(publisher.provider, fallback.publisher.provider),
+      publishMode: readPublishMode(
+        publisher.publishMode,
+        fallback.publisher.publishMode,
+      ),
       accountId: stringValue(publisher.accountId) ??
         fallback.publisher.accountId,
     },
@@ -768,6 +774,7 @@ function articleConfigToResolvedFallback(
     },
     publisher: {
       provider: config.publisher.provider,
+      publishMode: config.publisher.publishMode,
       accountId: config.publisher.accountId,
     },
     count: config.count,
@@ -1070,6 +1077,14 @@ function readPublisher(
 ) {
   const text = stringValue(value);
   return text === "weixin" || text === "weixin-relay" ? text : fallback;
+}
+
+function readPublishMode(
+  value: JsonValue | undefined,
+  fallback: "draft" | "publish",
+): "draft" | "publish" {
+  const text = stringValue(value);
+  return text === "draft" || text === "publish" ? text : fallback;
 }
 
 function isArticleImageProvider(value: string): value is ArticleImageProvider {
