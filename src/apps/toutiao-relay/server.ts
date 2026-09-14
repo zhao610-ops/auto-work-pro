@@ -3,7 +3,7 @@ import { ToutiaoBrowserSession } from "./browser-session.ts";
 import { loadToutiaoRelayConfig } from "./config.ts";
 import { errorHttpStatus, toToutiaoRelayError } from "./errors.ts";
 import { json, ok, readJson, verifyBearerToken } from "./http.ts";
-import type { ToutiaoDraftRequest } from "./types.ts";
+import type { ToutiaoDraftRequest, ToutiaoScheduleRequest } from "./types.ts";
 
 const logger = new Logger("toutiao-relay");
 const config = loadToutiaoRelayConfig();
@@ -42,6 +42,13 @@ Deno.serve({ port: config.port }, async (request) => {
     if (request.method === "POST" && url.pathname === "/api/toutiao/drafts") {
       const payload = await readJson<ToutiaoDraftRequest>(request);
       return ok(await session.saveDraft(payload));
+    }
+
+    if (
+      request.method === "POST" && url.pathname === "/api/toutiao/scheduled"
+    ) {
+      const payload = await readJson<ToutiaoScheduleRequest>(request);
+      return ok(await session.schedulePublication(payload));
     }
 
     return json({ success: false, error: "Not Found" }, { status: 404 });

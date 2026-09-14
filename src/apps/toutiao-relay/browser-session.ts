@@ -5,10 +5,16 @@ import {
   type Page,
 } from "npm:playwright-core@1.56.1";
 import { ToutiaoRelayError } from "./errors.ts";
+import {
+  resolveToutiaoScheduleTarget,
+  type ToutiaoScheduleTarget,
+} from "./schedule.ts";
 import type {
   ToutiaoDraftRequest,
   ToutiaoDraftResult,
   ToutiaoRelayConfig,
+  ToutiaoScheduledResult,
+  ToutiaoScheduleRequest,
   ToutiaoSessionStatus,
 } from "./types.ts";
 
@@ -74,36 +80,99 @@ export class ToutiaoBrowserSession {
         waitUntil: "domcontentloaded",
         timeout: 45_000,
       });
-      await waitForEditor(page);
-      const title = request.title.trim();
-      const content = request.contentHtml ?? request.contentText ?? "";
-      await fillTitle(page, title);
-      await verifyTitleReadback(page, title);
-      await fillContent(page, content);
-      await verifyContentReadback(page, content);
-
-      const coverPath = await prepareCoverImage(request);
-      let coverUploaded = false;
-      if (coverPath) {
-        await uploadCover(page, coverPath);
-        coverUploaded = true;
-      }
+      const article = await prepareArticle(page, request);
 
       await saveDraft(page);
       const screenshotPath = await this.captureScreenshot(page, "draft-saved");
       return {
         draftId: request.idempotencyKey ?? crypto.randomUUID(),
         status: "draft",
-        title,
+        title: article.title,
         currentUrl: page.url(),
         savedAt: new Date().toISOString(),
         idempotencyKey: request.idempotencyKey,
         screenshotPath,
         contentVerified: true,
-        coverUploaded,
+        coverUploaded: article.coverUploaded,
       };
     } catch (error) {
       const screenshotPath = await this.captureScreenshot(page, "draft-error")
+        .catch(() => undefined);
+      const relayError = error instanceof ToutiaoRelayError
+        ? error
+        : new ToutiaoRelayError(
+          "UNKNOWN",
+          error instanceof Error ? error.message : String(error),
+        );
+      throw new ToutiaoRelayError(
+        relayError.code,
+        `${relayError.message}${
+          screenshotPath ? `；截图：${screenshotPath}` : ""
+        }`,
+        {
+          ...relayError.details,
+          ...(screenshotPath ? { screenshotPath } : {}),
+        },
+      );
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
+  async schedulePublication(
+    request: ToutiaoScheduleRequest,
+  ): Promise<ToutiaoScheduledResult> {
+    validateDraftRequest(request);
+    const page = await this.newPage();
+    try {
+      const session = await this.checkLoginStatus(page);
+      if (!session.loggedIn) {
+        const screenshotPath = await this.captureScreenshot(
+          page,
+          "session-expired",
+        );
+        return {
+          draftId: request.idempotencyKey ?? crypto.randomUUID(),
+          status: "blocked",
+          title: request.title.trim(),
+          currentUrl: session.currentUrl ?? page.url(),
+          idempotencyKey: request.idempotencyKey,
+          reason: "今日头条账号未登录，请先调用 /api/toutiao/login 完成登录。",
+          errorCode: "AUTH_EXPIRED",
+          screenshotPath,
+        };
+      }
+
+      await page.goto(PUBLISH_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: 45_000,
+      });
+      const article = await prepareArticle(page, request);
+      await saveDraft(page);
+
+      const target = resolveToutiaoScheduleTarget(
+        new Date(),
+        this.config.defaultScheduleTime,
+        request.scheduledAt,
+      );
+      await configureSchedule(page, target);
+      const screenshotPath = await this.captureScreenshot(page, "scheduled");
+      return {
+        draftId: request.idempotencyKey ?? crypto.randomUUID(),
+        status: "scheduled",
+        title: article.title,
+        currentUrl: page.url(),
+        scheduledFor: target.at.toISOString(),
+        idempotencyKey: request.idempotencyKey,
+        screenshotPath,
+        contentVerified: true,
+        coverUploaded: article.coverUploaded,
+      };
+    } catch (error) {
+      const screenshotPath = await this.captureScreenshot(
+        page,
+        "schedule-error",
+      )
         .catch(() => undefined);
       const relayError = error instanceof ToutiaoRelayError
         ? error
@@ -239,6 +308,28 @@ function validateDraftRequest(request: ToutiaoDraftRequest): void {
       "contentHtml 或 contentText 不能为空",
     );
   }
+}
+
+interface PreparedArticle {
+  title: string;
+  coverUploaded: boolean;
+}
+
+async function prepareArticle(
+  page: Page,
+  request: ToutiaoDraftRequest,
+): Promise<PreparedArticle> {
+  await waitForEditor(page);
+  const title = request.title.trim();
+  const content = request.contentHtml ?? request.contentText ?? "";
+  await fillTitle(page, title);
+  await verifyTitleReadback(page, title);
+  await fillContent(page, content);
+  await verifyContentReadback(page, content);
+
+  const coverPath = await prepareCoverImage(request);
+  if (coverPath) await uploadCover(page, coverPath);
+  return { title, coverUploaded: Boolean(coverPath) };
 }
 
 async function waitForEditor(page: Page): Promise<void> {
@@ -494,6 +585,93 @@ async function saveDraft(page: Page): Promise<void> {
     });
 }
 
+async function configureSchedule(
+  page: Page,
+  target: ToutiaoScheduleTarget,
+): Promise<void> {
+  const scheduleButton = page.getByRole("button", {
+    name: "定时发布",
+    exact: true,
+  });
+  if (!await scheduleButton.isVisible().catch(() => false)) {
+    throw new ToutiaoRelayError(
+      "SCHEDULE_CONTROL_NOT_FOUND",
+      "没有找到今日头条定时发布按钮",
+    );
+  }
+  await scheduleButton.click();
+  const modal = page.locator(".common-timing-picker").last();
+  if (!await modal.isVisible().catch(() => false)) {
+    throw new ToutiaoRelayError(
+      "SCHEDULE_CONTROL_NOT_FOUND",
+      "点击定时发布后没有打开时间选择窗口",
+    );
+  }
+
+  await selectTimingValue(page, modal.locator(".day-select"), target.dateLabel);
+  await selectTimingValue(page, modal.locator(".hour-select"), target.hour);
+  await selectTimingValue(
+    page,
+    modal.locator(".minute-select"),
+    String(Number(target.minute)),
+  );
+
+  const publishTime = modal.locator(".publish-time");
+  await publishTime.waitFor({ state: "visible", timeout: 5_000 });
+  const actual = (await publishTime.innerText()).trim();
+  if (actual !== target.display) {
+    throw new ToutiaoRelayError(
+      "SCHEDULE_CONFIRM_FAILED",
+      "头条时间选择器回读与目标时间不一致",
+      { expected: target.display, actual },
+    );
+  }
+
+  await modal.getByRole("button", {
+    name: "预览并定时发布",
+    exact: true,
+  }).click();
+  await modal.waitFor({ state: "hidden", timeout: 15_000 }).catch(() => {
+    throw new ToutiaoRelayError(
+      "SCHEDULE_CONFIRM_FAILED",
+      "确认定时发布后窗口没有关闭",
+    );
+  });
+}
+
+async function selectTimingValue(
+  page: Page,
+  select: ReturnType<Page["locator"]>,
+  value: string,
+): Promise<void> {
+  if (!await select.isVisible().catch(() => false)) {
+    throw new ToutiaoRelayError(
+      "SCHEDULE_CONTROL_NOT_FOUND",
+      `没有找到定时发布的 ${value} 选择器`,
+    );
+  }
+  await select.click();
+  const option = page.locator(".byte-select-option").filter({
+    hasText: new RegExp(`^${escapeRegExp(value)}$`),
+  }).last();
+  if (!await option.isVisible().catch(() => false)) {
+    throw new ToutiaoRelayError(
+      "SCHEDULE_CONTROL_NOT_FOUND",
+      `定时发布选择器没有 ${value} 选项`,
+    );
+  }
+  await option.click();
+  const actual = (await select.locator(".byte-select-view-value").innerText())
+    .trim();
+  if (actual !== value) {
+    throw new ToutiaoRelayError(
+      "SCHEDULE_CONFIRM_FAILED",
+      "定时发布选择器回读不一致",
+      { expected: value, actual },
+    );
+  }
+}
+
 async function dismissOptionalDialog(page: Page): Promise<void> {
   const confirm = page.getByRole("button", { name: /确定|确认|知道了/ })
     .first();
@@ -541,6 +719,10 @@ function toPlainText(value: string): string {
 
 function normalizeText(value: string): string {
   return value.replaceAll(/\s+/g, " ").trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function imageSuffixFromContentType(contentType: string): string {

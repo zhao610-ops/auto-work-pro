@@ -8,6 +8,10 @@ export const TOUTIAO_RELAY_ERROR_CODES = [
   "COVER_UPLOAD_FAILED",
   "DRAFT_SAVE_TIMEOUT",
   "DRAFT_SAVE_FAILED",
+  "SCHEDULE_TIME_INVALID",
+  "SCHEDULE_WINDOW_INVALID",
+  "SCHEDULE_CONTROL_NOT_FOUND",
+  "SCHEDULE_CONFIRM_FAILED",
   "BROWSER_LAUNCH_FAILED",
   "UNKNOWN",
 ] as const;
@@ -38,5 +42,8 @@ export function errorHttpStatus(code: ToutiaoRelayErrorCode): number {
   if (code === "AUTH_EXPIRED") return 401;
   if (code === "CONTENT_INVALID") return 400;
   if (code === "COVER_NOT_FOUND") return 400;
+  if (code === "SCHEDULE_TIME_INVALID" || code === "SCHEDULE_WINDOW_INVALID") {
+    return 400;
+  }
   return 500;
 }
