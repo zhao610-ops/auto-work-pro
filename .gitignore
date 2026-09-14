@@ -61,3 +61,5 @@ tmp/
 *.sqlite
 *.sqlite3
 *.db
+
+data/toutiao/browser-data/
