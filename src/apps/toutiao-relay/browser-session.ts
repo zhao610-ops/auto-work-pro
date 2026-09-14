@@ -320,7 +320,28 @@ async function saveDraft(page: Page): Promise<void> {
       return;
     }
   }
-  throw new Error("没有找到今日头条保存草稿按钮");
+
+  // 目前的头条图文编辑器会在输入后自动保存，不再提供旧版的“保存草稿”按钮。
+  // 必须等待“保存中”结束，避免把尚未落盘的页面误报为成功。
+  const autoSaveStarted = page.getByText(/草稿保存中|正在保存草稿/).first();
+  const autoSaveCompleted = page.getByText(/草稿已保存|草稿保存成功|已保存草稿/)
+    .first();
+  const hasAutoSaveStatus =
+    await autoSaveStarted.isVisible().catch(() => false) ||
+    await autoSaveCompleted.isVisible().catch(() => false);
+
+  if (!hasAutoSaveStatus) {
+    throw new Error("没有找到今日头条草稿保存控件或自动保存状态");
+  }
+
+  await autoSaveCompleted.waitFor({ state: "visible", timeout: 15_000 })
+    .catch(async () => {
+      const stillSaving = await autoSaveStarted.isVisible().catch(() => false);
+      if (stillSaving) {
+        throw new Error("今日头条草稿仍在保存中，15 秒内未确认完成");
+      }
+      throw new Error("未识别到今日头条草稿保存完成状态");
+    });
 }
 
 async function dismissOptionalDialog(page: Page): Promise<void> {
