@@ -7,7 +7,10 @@ import {
   type ResolvedTrendPublishConfig,
   type ResolvedWeixinPublishAccountConfig,
 } from "@src/utils/config/define-config.ts";
-import type { PublishArticleRequest } from "@src/core/ports/content-publisher.ts";
+import type {
+  MassSendDraftRequest,
+  PublishArticleRequest,
+} from "@src/core/ports/content-publisher.ts";
 import { redactSensitiveText } from "@src/utils/security/redact.ts";
 import { Logger } from "@zilla/logger";
 
@@ -95,8 +98,20 @@ Deno.serve({ port }, async (request) => {
         digest: payload.digest,
         coverMediaId: payload.coverMediaId,
         publishMode: payload.publishMode,
+        idempotencyKey: payload.idempotencyKey,
       });
       return ok(result);
+    }
+
+    if (
+      request.method === "POST" &&
+      url.pathname === "/api/weixin/mass-send-draft"
+    ) {
+      const { account, payload } = await readRelayRequest<MassSendDraftRequest>(
+        request,
+      );
+      const publisher = createPublisher(account);
+      return ok(await publisher.massSendDraft(payload));
     }
 
     return json({ success: false, error: "Not Found" }, { status: 404 });

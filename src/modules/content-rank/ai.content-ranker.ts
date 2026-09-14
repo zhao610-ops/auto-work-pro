@@ -9,6 +9,7 @@ import { RankResult } from "@src/core/ports/content-ranker.ts";
 import { Logger } from "@zilla/logger";
 import { stripMarkdownFence } from "@src/utils/llm-output.ts";
 import { PromptProfileName } from "@src/prompts/prompt-profile.ts";
+import type { JsonObject } from "@src/core/ports/runtime-config-store.ts";
 
 const logger = new Logger("ai-content-ranker");
 const LOCAL_FALLBACK_WARNING = "[内容排序] AI 排序失败，使用本地可解释排序兜底";
@@ -18,6 +19,7 @@ export class ContentRanker {
   constructor(
     private readonly llmProvider: LLMProvider,
     private readonly promptProfile?: PromptProfileName,
+    private readonly accountBrand?: JsonObject,
   ) {
     logger.info("Ranker使用统一LLM配置");
   }
@@ -65,10 +67,17 @@ export class ContentRanker {
 
   private async rankWithLLM(contents: ScrapedContent[]): Promise<RankResult[]> {
     const messages: ChatMessage[] = [
-      { role: "system", content: getSystemPrompt(this.promptProfile) },
+      {
+        role: "system",
+        content: getSystemPrompt(this.promptProfile, this.accountBrand),
+      },
       {
         role: "user",
-        content: getUserPrompt(contents, this.promptProfile),
+        content: getUserPrompt(
+          contents,
+          this.promptProfile,
+          this.accountBrand,
+        ),
       },
     ];
 

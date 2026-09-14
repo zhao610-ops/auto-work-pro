@@ -501,7 +501,7 @@ features: {
       blockOnHighFactIssue: true,
       forcePublish: false,
       allowForcePublish: true,
-      maxRevisionRounds: 1,
+      maxRevisionRounds: 3,
     },
   },
 },
@@ -515,8 +515,10 @@ HTML、文章计划和质量审稿 artifact，方便先观察质量；`dryRun: f
 才会调用微信发布接口公开发布。未达标的文章不会丢失，而是自动降级保存到草稿箱，
 并在发布结果中记录原因。这里的公开发布不是群发，不会向关注者推送群发消息。
 如果把 `forcePublish` 配成 `true`，会绕过质量门禁并直接公开发布，请谨慎使用。
-`maxRevisionRounds` 控制自动修复轮次，建议保持 `1`：只修 reviewer
-指出的可安全自动修复问题，修完会复审一次，再决定最终发布结果。
+`maxRevisionRounds` 控制自动修复轮次，默认最多 3 轮。`publishMode: "mass"`
+用于定时运行时，会在设定时间前 10
+分钟生成草稿并完成修订；普通编辑问题采用最佳版本， 只有合规 blocker
+或高危事实问题会阻止进入待发送队列。
 
 ### 8. 开启工作流通知
 
@@ -654,6 +656,11 @@ features: {
 `runtimeConfig` 中保存的 schedule，命中后才创建微信文章 workflow 运行实例。
 默认初始化出的 schedule 是每天凌晨 3 点（`Asia/Shanghai`），后续可以在 Dashboard
 修改，不需要重新部署。项目不再按星期切换其他工作流。
+
+本地/Docker 使用 `publishMode: "mass"` 时，schedule 表示正式群发时间。系统会提前
+10 分钟生成并保存草稿，到点只调用群发接口，不再重新抓取和生成。待发送记录保存在
+artifact 目录，容器重启后仍可恢复；如果草稿稍晚才准备完成，后续 heartbeat 会在
+30 分钟补偿窗口内继续发送，最多重试 3 次。
 
 ## 排查建议
 

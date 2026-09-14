@@ -1,6 +1,7 @@
 import {
   ContentImageUploader,
   ContentPublisher,
+  MassSendDraftRequest,
   PublishArticleRequest,
   PublishResult,
 } from "@src/core/ports/content-publisher.ts";
@@ -84,6 +85,18 @@ export class WeixinRelayPublisher
   async publishArticle(request: PublishArticleRequest): Promise<PublishResult> {
     const result = await this.request<PublishResult>(
       "/api/weixin/publish",
+      request,
+      300000,
+    );
+    return {
+      ...result,
+      publishedAt: new Date(result.publishedAt),
+    };
+  }
+
+  async massSendDraft(request: MassSendDraftRequest): Promise<PublishResult> {
+    const result = await this.request<PublishResult>(
+      "/api/weixin/mass-send-draft",
       request,
       300000,
     );

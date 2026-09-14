@@ -237,7 +237,7 @@ export default defineConfig({
        */
       publisher: {
         provider: "weixin",
-        // "draft": 仅进入草稿箱；"publish": 质量达标后调用发布接口公开发布（不是群发）。
+        // "draft": 仅进入草稿箱；"publish": 公开发布；"mass": 质量达标后自动群发全部粉丝。
         publishMode: "draft",
         // 多公众号发布目标。默认账号留空；使用 accounts 时填写 "main"、"lab" 等 accountId。
         accountId: "",
@@ -352,7 +352,7 @@ export default defineConfig({
         blockOnHighFactIssue: true,
         forcePublish: false,
         allowForcePublish: true,
-        maxRevisionRounds: 1,
+        maxRevisionRounds: 3,
       },
     },
   },

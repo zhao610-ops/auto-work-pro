@@ -29,6 +29,7 @@ export function postProcessDynamicHtml(
   html = convertListsToSections(html);
   html = sanitizeAttributes(html);
   html = sanitizeImages(html);
+  html = removeHeaderMetaParagraphs(html);
 
   const linkResult = convertLinksToFootnotes(html);
   html = linkResult.html;
@@ -42,6 +43,27 @@ export function postProcessDynamicHtml(
     html,
     footnotes: linkResult.footnotes,
   };
+}
+
+function removeHeaderMetaParagraphs(input: string): string {
+  const withoutEyebrow = input.replace(
+    /(<section\b[^>]*>)\s*<p\b[^>]*>([\s\S]*?)<\/p>\s*(<h[1-3]\b)/i,
+    (match, section: string, inner: string, heading: string) => {
+      const text = inner.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      return text.length <= 40 ? `${section}${heading}` : match;
+    },
+  );
+  return withoutEyebrow.replace(
+    /<p\b[^>]*>([\s\S]*?)<\/p>/gi,
+    (paragraph, inner: string) => {
+      const text = inner.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      if (text.length > 100) return paragraph;
+      return /(?:来源简报|市场简报|行业简报|商业简报|每日简报|daily-brief)/i
+          .test(text)
+        ? ""
+        : paragraph;
+    },
+  );
 }
 
 export { stripMarkdownFence };

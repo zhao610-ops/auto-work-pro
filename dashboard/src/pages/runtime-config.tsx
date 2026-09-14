@@ -460,6 +460,7 @@ function TrendProfileView(
             >
               <option value="draft">仅保存到草稿箱</option>
               <option value="publish">质量达标后直接发布</option>
+              <option value="mass">质量达标后自动群发全部粉丝</option>
             </Select>
           </label>
           <label className="space-y-1.5">
@@ -717,7 +718,7 @@ function TrendProfileView(
                   max="100"
                   value={draft.qualityGateMinScore}
                   disabled={!draft.qualityGateEnabled ||
-                    draft.publisherPublishMode !== "publish"}
+                    draft.publisherPublishMode === "draft"}
                   onChange={(event) =>
                     update("qualityGateMinScore", event.currentTarget.value)}
                 />

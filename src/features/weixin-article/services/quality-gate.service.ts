@@ -1,5 +1,6 @@
 import type { ArticleQualityReview } from "@src/features/weixin-article/domain/quality-review.ts";
 import type { ResolvedTrendPublishConfig } from "@src/utils/config/define-config.ts";
+import type { ArticlePublishMode } from "@src/utils/config/define-config.ts";
 
 export interface QualityGateDecision {
   allowed: boolean;
@@ -9,12 +10,33 @@ export interface QualityGateDecision {
 }
 
 export interface ArticlePublishModeDecision {
-  publishMode: "draft" | "publish";
+  publishMode: ArticlePublishMode;
   downgradeReason?: string;
 }
 
 export type ArticleQualityGateConfig =
   ResolvedTrendPublishConfig["features"]["article"]["qualityGate"];
+
+/** 只有事实高风险和合规问题会阻止定时群发，普通编辑问题交给自动修订。 */
+export function getHardQualityBlockReason(
+  review: ArticleQualityReview,
+  config: ArticleQualityGateConfig,
+): string | null {
+  const complianceBlocker = review.issues.find((issue) =>
+    issue.severity === "blocker" && issue.id.startsWith("compliance-")
+  );
+  if (complianceBlocker) {
+    return `存在不可绕过的合规问题: ${complianceBlocker.message}`;
+  }
+  if (config.blockOnHighFactIssue) {
+    const highFactIssue = review.issues.find((issue) =>
+      issue.category === "fact" &&
+      (issue.severity === "high" || issue.severity === "blocker")
+    );
+    if (highFactIssue) return `存在高危事实问题: ${highFactIssue.message}`;
+  }
+  return null;
+}
 
 export function evaluateArticleQualityGate(
   input: {
@@ -42,15 +64,13 @@ export function evaluateArticleQualityGate(
     };
   }
 
-  const complianceBlocker = input.review.issues.find((issue) =>
-    issue.severity === "blocker" && issue.id.startsWith("compliance-")
-  );
-  if (complianceBlocker) {
+  const hardBlockReason = getHardQualityBlockReason(input.review, input.config);
+  if (hardBlockReason) {
     return {
       allowed: false,
       bypassed: false,
       action: "block",
-      reason: `存在不可绕过的合规问题: ${complianceBlocker.message}`,
+      reason: hardBlockReason,
     };
   }
 
@@ -86,14 +106,22 @@ export function evaluateArticleQualityGate(
 }
 
 export function resolveArticlePublishMode(
-  configuredPublishMode: "draft" | "publish",
+  configuredPublishMode: ArticlePublishMode,
   qualityGateDecision: QualityGateDecision,
   protection?: { requiresDraft: boolean; reason: string },
 ): ArticlePublishModeDecision {
-  if (protection?.requiresDraft && configuredPublishMode === "publish") {
+  if (protection?.requiresDraft && configuredPublishMode !== "draft") {
     return {
       publishMode: "draft",
       downgradeReason: `未自动公开发布，已保留草稿: ${protection.reason}`,
+    };
+  }
+
+  if (configuredPublishMode === "mass" && qualityGateDecision.bypassed) {
+    return {
+      publishMode: "draft",
+      downgradeReason:
+        `未自动群发，已保留草稿: 群发不允许绕过质量门禁（${qualityGateDecision.reason}）`,
     };
   }
 

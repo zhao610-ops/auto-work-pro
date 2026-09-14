@@ -1,12 +1,14 @@
 import { assertEquals } from "@std/assert";
 import { ImageGeneratorType } from "@src/core/ports/image-generator.ts";
 import {
+  DEFAULT_COVER_IMAGE_SIZE,
   DEFAULT_COVER_MEDIA_ID,
   WeixinArticleCoverService,
 } from "@src/features/weixin-article/services/article-cover.service.ts";
 
 Deno.test("cover service records generated cover details", async () => {
   const uploaded: string[] = [];
+  let request: Record<string, unknown> | undefined;
   const service = new WeixinArticleCoverService(
     {
       uploadImage: async (url: string) => {
@@ -19,7 +21,10 @@ Deno.test("cover service records generated cover details", async () => {
         initialize: async () => {},
         refresh: async () => {},
         saveToFile: async () => {},
-        generate: async () => "https://example.com/cover.png",
+        generate: (options) => {
+          request = options as unknown as Record<string, unknown>;
+          return Promise.resolve("https://example.com/cover.png");
+        },
       }),
     },
     "technology",
@@ -35,6 +40,12 @@ Deno.test("cover service records generated cover details", async () => {
   assertEquals(result.model, "qwen-image-2.0-pro");
   assertEquals(result.imageUrl, "https://example.com/cover.png");
   assertEquals(uploaded, ["https://example.com/cover.png"]);
+  assertEquals(request?.size, DEFAULT_COVER_IMAGE_SIZE);
+  assertEquals(request?.sub_title, undefined);
+  assertEquals(
+    String(request?.prompt_text_zh).includes("画面中不得出现任何中文"),
+    true,
+  );
 });
 
 Deno.test("cover service records fallback reason", async () => {

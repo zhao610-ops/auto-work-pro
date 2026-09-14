@@ -8,8 +8,10 @@
     "article": "deno run -A scripts/task-runner.ts article",
     "experiment": "deno run -A scripts/task-runner.ts experiment",
     "preview": "deno run -A scripts/task-runner.ts preview",
+    "cover-preview": "deno run -A scripts/preview.cover.ts",
     "relay": "deno run -A scripts/task-runner.ts relay",
     "weixin:relay": "deno task relay",
+    "toutiao:relay": "deno run -A scripts/task-runner.ts toutiao-relay",
     "docker": "deno run -A scripts/task-runner.ts docker",
     "cf": "deno run -A scripts/task-runner.ts cf",
     "build": "deno run -A scripts/task-runner.ts build",
@@ -56,6 +58,7 @@
     "npm:esbuild@0.21.5",
     "npm:esbuild@0.27.3",
     "npm:fsevents@2.3.3",
+    "npm:playwright-core@1.56.1",
     "npm:sharp@0.34.5",
     "npm:workerd@1.20260520.1"
   ]

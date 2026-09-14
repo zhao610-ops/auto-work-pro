@@ -205,7 +205,7 @@ Deno.test("resolveTrendPublishConfig uses feature defaults without provider enab
   assertEquals(config.features.article.qualityGate.blockOnHighFactIssue, true);
   assertEquals(config.features.article.qualityGate.forcePublish, false);
   assertEquals(config.features.article.qualityGate.allowForcePublish, true);
-  assertEquals(config.features.article.qualityGate.maxRevisionRounds, 1);
+  assertEquals(config.features.article.qualityGate.maxRevisionRounds, 3);
   assertEquals(config.features.article.sourceLimits.maxAgeDays, 14);
   assertEquals(config.features.article.sourceLimits.maxItemsPerSource, 20);
   assertEquals(config.features.article.notifications.channels, []);

@@ -1675,12 +1675,20 @@ function QualityReviewWorkspace(
 function PublishResultNotice({ result }: { result: PublishArtifactResult }) {
   const message = result.status === "published"
     ? "文章已公开发布"
+    : result.status === "mass-sent"
+    ? "文章已成功群发给全部粉丝"
+    : result.status === "mass-sending"
+    ? "微信群发任务仍在处理中"
+    : result.status === "mass-failed"
+    ? result.reason ?? "微信群发失败"
     : result.status === "publishing"
     ? "微信仍在发布处理中，可稍后到公众号后台确认"
     : result.status === "draft"
     ? result.reason ?? "文章已保存到公众号草稿箱"
     : result.reason ?? `发布状态：${result.status}`;
-  const className = result.status === "publishing" || result.reason
+  const className = result.status === "publishing" ||
+      result.status === "mass-sending" || result.status === "mass-failed" ||
+      result.reason
     ? "tp-warning"
     : "tp-card-soft";
 

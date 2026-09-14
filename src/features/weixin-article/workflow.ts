@@ -25,6 +25,7 @@ import type { EvidencePack } from "@src/features/weixin-article/domain/evidence.
 import type { EditorialMemoryContext } from "@src/core/ports/editorial-memory-store.ts";
 import {
   evaluateArticleQualityGate,
+  getHardQualityBlockReason,
   resolveArticlePublishMode,
 } from "@src/features/weixin-article/services/quality-gate.service.ts";
 import {
@@ -34,6 +35,7 @@ import {
   createAccountLearningSnapshot,
 } from "@src/features/weixin-article/services/account-learning-snapshot.ts";
 import type { ResolvedTrendPublishConfig } from "@src/utils/config/define-config.ts";
+import type { ArticlePublishMode } from "@src/utils/config/define-config.ts";
 import { hasDraftFallback } from "@src/features/weixin-article/services/article-draft.service.ts";
 import type { FactVerificationReport } from "@src/features/weixin-article/services/fact-verification.service.ts";
 
@@ -48,6 +50,8 @@ interface WeixinWorkflowParams {
   sourceType?: ArticleSourceFilter;
   maxArticles?: number;
   forcePublish?: boolean;
+  prepareOnly?: boolean;
+  scheduledSendAt?: string;
   dryRun?: boolean;
   dryRunOutputDir?: string;
   runId?: string;
@@ -60,7 +64,7 @@ interface WeixinWorkflowParams {
 
 export interface WeixinArticleWorkflowConfig {
   dryRun: boolean;
-  publishMode: "draft" | "publish";
+  publishMode: ArticlePublishMode;
   profileId?: string;
   accountId?: string;
   accountBrand?: JsonObject;
@@ -688,7 +692,15 @@ export class WeixinArticleWorkflow {
 
       const maxRevisionRounds = Math.max(
         0,
-        Math.min(2, this.dependencies.config.qualityGate.maxRevisionRounds),
+        Math.min(
+          3,
+          event.payload.prepareOnly
+            ? Math.max(
+              3,
+              this.dependencies.config.qualityGate.maxRevisionRounds,
+            )
+            : this.dependencies.config.qualityGate.maxRevisionRounds,
+        ),
       );
       if (maxRevisionRounds > 0) {
         const planInputContents = await artifactStore
@@ -993,6 +1005,14 @@ export class WeixinArticleWorkflow {
           if (downgradeReason) {
             logger.warn(`[发布保护] ${downgradeReason}`);
           }
+          const isScheduledPreparation = event.payload.prepareOnly === true &&
+            this.dependencies.config.publishMode === "mass" && !dryRun;
+          const hardBlockReason = isScheduledPreparation
+            ? getHardQualityBlockReason(
+              finalReview,
+              this.dependencies.config.qualityGate,
+            )
+            : null;
           const publishResult = dryRun
             ? {
               publishId: "dry-run",
@@ -1001,12 +1021,31 @@ export class WeixinArticleWorkflow {
               platform: "weixin",
               url: dryRunPreviewRef?.key,
             }
+            : isScheduledPreparation
+            ? {
+              ...await this.publishArticle(
+                renderedTemplate,
+                finalTitle,
+                mediaId,
+                "draft",
+                runId,
+              ),
+              status: hardBlockReason
+                ? "blocked" as const
+                : "scheduled" as const,
+              scheduledFor: event.payload.scheduledSendAt,
+              reason: hardBlockReason ??
+                (qualityGateDecision.allowed
+                  ? "质量审稿通过，草稿已提前准备，等待定时群发"
+                  : "已自动修订并保留最佳版本，等待定时群发"),
+            }
             : {
               ...await this.publishArticle(
                 renderedTemplate,
                 finalTitle,
                 mediaId,
                 effectivePublishMode,
+                runId,
               ),
               ...(downgradeReason ? { reason: downgradeReason } : {}),
             };
@@ -1156,10 +1195,13 @@ export class WeixinArticleWorkflow {
     renderedTemplate: string,
     summaryTitle: string,
     mediaId: string,
-    publishMode: "draft" | "publish",
+    publishMode: ArticlePublishMode,
+    idempotencyKey: string,
   ): Promise<PublishResult> {
     logger.info(
-      publishMode === "publish"
+      publishMode === "mass"
+        ? "[发布] 创建草稿并自动群发给全部粉丝"
+        : publishMode === "publish"
         ? "[发布] 创建草稿并自动公开发布"
         : "[发布] 保存到微信公众号草稿箱",
     );
@@ -1169,6 +1211,7 @@ export class WeixinArticleWorkflow {
       digest: summaryTitle,
       coverMediaId: mediaId,
       publishMode,
+      idempotencyKey,
     });
   }
 
@@ -1312,5 +1355,10 @@ function formatPublishSummary(result: PublishResult, dryRun: boolean): string {
   }
   if (result.status === "publishing") return "已提交公开发布，微信处理中";
   if (result.status === "published") return "已公开发布（未群发）";
+  if (result.status === "mass-sending") return "已提交群发，微信处理中";
+  if (result.status === "mass-sent") return "已成功群发给全部粉丝";
+  if (result.status === "mass-failed") {
+    return `群发失败${result.reason ? `（${result.reason}）` : ""}`;
+  }
   return result.status;
 }

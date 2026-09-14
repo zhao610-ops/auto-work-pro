@@ -81,9 +81,7 @@ export function parseSourceInput(rawSource: string): ParsedArticleSource {
     return { raw, group, url: query, kind: "query" };
   }
 
-  if (!isHttpUrl(url)) {
-    throw new Error(`数据源 URL 无效: ${raw}`);
-  }
+  throw new Error(`数据源 URL 无效: ${raw}`);
 }
 
 function isHttpUrl(value: string): boolean {

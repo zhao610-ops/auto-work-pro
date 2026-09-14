@@ -612,6 +612,8 @@ export interface PublishArtifactResult {
   reason?: string;
   draftMediaId?: string;
   articleId?: string;
+  massMessageId?: string;
+  massDataId?: string;
 }
 
 export interface ApiErrorPayload {

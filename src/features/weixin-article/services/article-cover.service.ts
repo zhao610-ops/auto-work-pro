@@ -16,6 +16,7 @@ import { formatAccountBrandGuide } from "@src/prompts/account-brand.ts";
 const logger = new Logger("weixin-article-cover-service");
 const DEFAULT_COVER_GENERATION_TIMEOUT_MS = 150_000;
 const DEFAULT_COVER_UPLOAD_TIMEOUT_MS = 45_000;
+export const DEFAULT_COVER_IMAGE_SIZE = "1792*768";
 export const DEFAULT_COVER_MEDIA_ID =
   "SwCSRjrdGJNaWioRQUHzgF68BHFkSlb_f5xlTquvsOSA6Yy0ZRjFo0aW9eS3JJu_";
 
@@ -30,6 +31,7 @@ interface ArticleCoverImageRequest {
   title: string;
   sub_title?: string;
   prompt_text_zh?: string;
+  size?: string;
   generate_mode: "generate";
   generate_num: 1;
 }
@@ -114,17 +116,19 @@ export class WeixinArticleCoverService {
         return await imageGenerator.generate({
           model: this.imageModel,
           title: coverTitle,
-          sub_title: `${new Date().toLocaleDateString()} ${profile.label}`,
           prompt_text_zh: [
-            "中文公众号封面图",
-            `主题：${profile.coverGuidance}`,
-            `标题语义：${coverTitle}`,
+            "微信公众号横版封面配图",
+            `文章主题：${coverTitle}`,
+            `画面方向：${profile.coverGuidance}`,
             `目标读者：${profile.audience}`,
-            `视觉风格：${profile.editorialTone}`,
+            `视觉风格：高端商业杂志质感，${profile.editorialTone}`,
             `画面元素：${profile.imageGuidance}`,
             brandGuide ? `账号约束：${brandGuide}` : "",
-            "限制：不要出现二维码、水印、品牌 Logo、可识别人脸；不要生成除标题外的多余小字",
+            "内容相关性：优先使用与文章主题直接相关的物体、环境和行为表达核心概念，避免空泛的科技背景、增长箭头、办公桌和报表",
+            "构图要求：主体明确、层次丰富、自然光影、细节清晰，重要内容位于画面中央安全区域，左右允许裁切",
+            "严格限制：文章标题仅用于理解主题，画面中不得出现任何中文、英文、数字、字母、Logo、水印、二维码、界面截图或可识别人脸",
           ].filter(Boolean).join(" | "),
+          size: DEFAULT_COVER_IMAGE_SIZE,
           generate_mode: "generate",
           generate_num: 1,
         });

@@ -415,8 +415,8 @@ function weixinAccountFromBody(
     name: stringValue(body.name) ?? "未命名公众号",
     enabled: booleanValue(body.enabled) ?? true,
     defaultArticleProfileId: stringValue(body.defaultArticleProfileId),
-    brand: objectValue(body.brand),
-    defaults: objectValue(body.defaults),
+    brand: objectValue(body.brand) ?? {},
+    defaults: objectValue(body.defaults) ?? {},
     ops: objectValue(body.ops),
   };
 }
@@ -684,7 +684,7 @@ async function validateArticlePatch(
     validateStringEnum(
       publisher.publishMode,
       "article.publisher.publishMode",
-      ["draft", "publish"],
+      ["draft", "publish", "mass"],
       issues,
     );
     validateOptionalAccountId(

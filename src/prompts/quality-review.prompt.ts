@@ -32,6 +32,7 @@ ${newsroomStyle}
 2. 必须基于输入的来源文章、今日选题、Article Plan 和最终 HTML 判断。
 3. 不新增事实，不臆测作者意图，不给泛泛而谈的建议。
 4. 重点找会影响发布质量的问题：事实不一致、标题误导、结构偏离、AI 味、公众号 HTML 不兼容、图片不相关、风险边界缺失。
+5. 检查文章是否真正服务账号定位和目标岗位，而不是仅仅属于宽泛的“商业”或“科技”话题。
 
 硬性输出要求：
 1. 只返回 JSON，不要 markdown，不要代码块。
@@ -71,6 +72,7 @@ ${newsroomStyle}
 - 40-59：需要修订。
 - 0-39：禁止正式发布。
 - blocker 或高危事实问题时 recommendedAction 必须为 block。
+- 如果主题无法直接服务账号目标读者的工作判断，或者只是纯科技产品、AI 模型、Agent、开发者工具和一般科技公司动态，overallScore 最高 39，allowPublish 必须为 false，recommendedAction 必须为 block。
 
 分类口径：
 - fact：最终正文出现来源或计划不支持的事实、数字、结论。
@@ -85,6 +87,8 @@ ${newsroomStyle}
 - 如果只是风格可以更好，不要给 high 或 blocker。
 - 如果首屏没有让人继续读的具体信息点，expressionQuality 和 structureQuality 都应扣分。
 - 如果标题仍是“AI速递/今日快报/行业观察”这类模板标题，titleQuality 应明显扣分。
+- 标题下方不得出现“商业与产业 · 来源简报 | 日期”等栏目、模板类型或日期组合；出现时作为 html 问题要求删除。
+- 微信公众号正文允许并依赖标签上的内联 style 属性；不要因为使用 style 属性或内联样式较多而扣分。这里禁止的是 <style> 标签，不是 style 属性。
 - 如果无法从来源确认事实，应降低 factConsistency 并指出需要谨慎。
 - issues 控制在 0-8 条，优先列出真正重要的问题。`;
 }

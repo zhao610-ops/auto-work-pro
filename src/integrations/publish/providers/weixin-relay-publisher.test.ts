@@ -26,9 +26,9 @@ Deno.test("WeixinRelayPublisher forwards selected account credentials", async ()
     },
     "lab",
     {
-      request: async (_url: string, options: RequestInit) => {
-        capturedBody = JSON.parse(String(options.body));
-        return {
+      request: <T>(_url: string, options?: RequestInit) => {
+        capturedBody = JSON.parse(String(options?.body));
+        return Promise.resolve({
           success: true,
           data: {
             publishId: "draft-id",
@@ -37,9 +37,8 @@ Deno.test("WeixinRelayPublisher forwards selected account credentials", async ()
             platform: "weixin",
             accountId: "lab",
           },
-        };
+        } as T);
       },
-      healthCheck: async () => true,
     },
   );
 
@@ -49,6 +48,7 @@ Deno.test("WeixinRelayPublisher forwards selected account credentials", async ()
     content: "<section>正文</section>",
     coverMediaId: "cover-id",
     publishMode: "publish",
+    idempotencyKey: "run-123",
   });
 
   assertEquals(capturedBody?.account, {
@@ -65,6 +65,7 @@ Deno.test("WeixinRelayPublisher forwards selected account credentials", async ()
     content: "<section>正文</section>",
     coverMediaId: "cover-id",
     publishMode: "publish",
+    idempotencyKey: "run-123",
   });
   assertEquals(result.accountId, "lab");
   assertEquals(result.publishedAt instanceof Date, true);

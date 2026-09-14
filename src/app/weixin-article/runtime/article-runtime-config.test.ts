@@ -167,6 +167,28 @@ Deno.test("runtime config persists publish mode and automatic publish score", as
   assertEquals(resolved.config.features.article.qualityGate.minScore, 86);
 });
 
+Deno.test("runtime config persists automatic mass send mode", async () => {
+  const store = new SQLiteRuntimeConfigStore(":memory:");
+  const config = createConfig();
+  await seedArticleRuntimeConfig(store, config);
+
+  const detail = await getArticleRuntimeProfileDetail(store, config);
+  await saveArticleProfileConfig(store, config, detail.profile.id, {
+    publisher: {
+      ...detail.article.publisher,
+      publishMode: "mass",
+    },
+  });
+
+  const resolved = await resolveArticleRuntimeConfig(
+    store,
+    config,
+    detail.profile.id,
+  );
+
+  assertEquals(resolved.config.features.article.publisher.publishMode, "mass");
+});
+
 Deno.test("runtime config resolves MiniMax image capability provider", async () => {
   const store = new SQLiteRuntimeConfigStore(":memory:");
   const config = createConfig();

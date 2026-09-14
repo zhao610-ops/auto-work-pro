@@ -775,7 +775,7 @@ function articleConfigToResolvedFallback(
     publisher: {
       provider: config.publisher.provider,
       publishMode: config.publisher.publishMode,
-      accountId: config.publisher.accountId,
+      accountId: config.publisher.accountId ?? "",
     },
     count: config.count,
     dryRun: config.dryRun,
@@ -1081,10 +1081,12 @@ function readPublisher(
 
 function readPublishMode(
   value: JsonValue | undefined,
-  fallback: "draft" | "publish",
-): "draft" | "publish" {
+  fallback: "draft" | "publish" | "mass",
+): "draft" | "publish" | "mass" {
   const text = stringValue(value);
-  return text === "draft" || text === "publish" ? text : fallback;
+  return text === "draft" || text === "publish" || text === "mass"
+    ? text
+    : fallback;
 }
 
 function isArticleImageProvider(value: string): value is ArticleImageProvider {

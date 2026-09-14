@@ -162,6 +162,29 @@ Deno.test("publish mode directly publishes an article that passes the gate", () 
   assertEquals(resolution, { publishMode: "publish" });
 });
 
+Deno.test("mass mode sends an article that passes the gate", () => {
+  const resolution = resolveArticlePublishMode("mass", {
+    allowed: true,
+    bypassed: false,
+    action: "allow",
+    reason: "质量审稿通过",
+  });
+
+  assertEquals(resolution, { publishMode: "mass" });
+});
+
+Deno.test("mass mode does not allow force publish to bypass the gate", () => {
+  const resolution = resolveArticlePublishMode("mass", {
+    allowed: true,
+    bypassed: true,
+    action: "bypass",
+    reason: "forcePublish 已绕过质量门禁",
+  });
+
+  assertEquals(resolution.publishMode, "draft");
+  assertEquals(resolution.downgradeReason?.includes("不允许绕过"), true);
+});
+
 Deno.test("publish mode downgrades a low-score article to a draft", () => {
   const resolution = resolveArticlePublishMode("publish", {
     allowed: false,

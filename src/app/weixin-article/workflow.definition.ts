@@ -19,6 +19,9 @@ export interface WeixinArticleWorkflowInput {
   sourceType?: ArticleSourceFilter;
   maxArticles?: number;
   forcePublish?: boolean;
+  /** 定时预生成：只创建草稿，等待正式发送时刻。 */
+  prepareOnly?: boolean;
+  scheduledSendAt?: string;
   dryRun?: boolean;
   dryRunOutputDir?: string;
   runId?: string;

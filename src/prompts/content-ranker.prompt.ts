@@ -4,17 +4,22 @@ import {
   PromptProfileName,
   resolvePromptProfile,
 } from "@src/prompts/prompt-profile.ts";
+import { formatAccountBrandGuide } from "@src/prompts/account-brand.ts";
+import type { JsonObject } from "@src/core/ports/runtime-config-store.ts";
 
 export function getSystemPrompt(
   promptProfile?: PromptProfileName,
+  accountBrand?: JsonObject,
 ): string {
   const profile = resolvePromptProfile(promptProfile);
   const newsroomStyle = getChineseNewsroomStyleGuide(promptProfile);
+  const brandGuide = formatAccountBrandGuide(accountBrand);
   return `你是面向中文公众号的资深选题编辑，负责从候选内容中挑出最值得写成“${profile.label}”的文章。
 
 目标读者：${profile.audience}。
 
 编辑口径：${profile.editorialTone}。
+${brandGuide}
 
 ${newsroomStyle}
 
@@ -46,6 +51,13 @@ ${newsroomStyle}
 - 是否有可用于成文的明确观点、冲突、对比、图片或案例
 - 是否能写出有读者欲望的第一段，而不是只能写成模板化摘要
 - 有图片/演示/截图可以略微加分，但不要机械加 10 分
+
+账号定位准入规则（优先级高于通用 profile）：
+- 候选内容必须能说明它对账号目标读者的工作判断有什么价值，不能只因为公司知名、技术新或正在流行而得高分。
+- 面向市场、品牌、产品企划和用户研究岗位时，优先选择消费者需求与行为、市场规模与增速、品类和价格带、品牌与渠道、零售与供应链、行业结构及宏观经济信号。
+- 纯 AI 模型、Agent、开发者工具、技术参数和科技公司一般动态，如果没有明确的消费行为、市场数据、经营影响或具体行业应用，最高 39 分。
+- 职业成长内容必须直接服务市场、品牌、产品企划或用户研究岗位能力；泛职场鸡汤、求职技巧和情绪内容最高 39 分。
+- 至少能回答“影响哪个岗位、哪项决策、依据是什么”三个问题中的两个，否则最高 39 分。
 
 内容类型偏好：
 ${profile.preferredTopics.map((item) => `- ${item}`).join("\n")}
@@ -80,12 +92,15 @@ ${profile.lowValueSignals.map((item) => `- ${item}`).join("\n")}
 export function getUserPrompt(
   contents: ScrapedContent[],
   promptProfile?: PromptProfileName,
+  accountBrand?: JsonObject,
 ): string {
   const profile = resolvePromptProfile(promptProfile);
+  const brandGuide = formatAccountBrandGuide(accountBrand);
   return `请根据 system 规则对下面候选文章评分并去重。只返回“文章ID: 分数”行。
 
 当前内容定位：${profile.label}
 目标读者：${profile.audience}
+${brandGuide}
 
 候选文章：
 ${

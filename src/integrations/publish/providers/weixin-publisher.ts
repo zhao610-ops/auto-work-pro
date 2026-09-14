@@ -1,6 +1,7 @@
 import {
   ContentImageUploader,
   ContentPublisher,
+  MassSendDraftRequest,
   PublishArticleRequest,
   PublishResult,
 } from "@src/core/ports/content-publisher.ts";
@@ -45,6 +46,16 @@ interface WeixinPublishStatusResponse {
   article_detail?: {
     item?: WeixinPublishedArticleItem[];
   };
+}
+
+interface WeixinMassSubmitResponse {
+  msg_id: string | number;
+  msg_data_id?: string | number;
+}
+
+interface WeixinMassStatusResponse {
+  msg_id?: string | number;
+  msg_status?: string;
 }
 
 export interface WeixinPublisherOptions {
@@ -230,6 +241,66 @@ export class WeixinPublisher implements ContentPublisher, ContentImageUploader {
     }
     return null;
   }
+
+  private async submitMassSend(
+    mediaId: string,
+    clientMessageId: string,
+  ): Promise<{ messageId: string; dataId?: string }> {
+    const token = await this.ensureAccessToken();
+    const response = await this.apiClient.postJson<WeixinMassSubmitResponse>(
+      "/cgi-bin/message/mass/sendall",
+      token,
+      {
+        filter: { is_to_all: true },
+        mpnews: { media_id: mediaId },
+        msgtype: "mpnews",
+        send_ignore_reprint: 0,
+        // 微信当前实际校验上限为 32 字节；运行 ID 仅含 ASCII，按 32 个字符截断即可。
+        clientmsgid: clientMessageId.slice(0, 32),
+      },
+    );
+    const messageId = String(response.msg_id ?? "").trim();
+    if (!messageId) {
+      throw new ProviderError({
+        provider: "weixin",
+        kind: "invalid_response",
+        message: "微信群发接口未返回 msg_id",
+      });
+    }
+    const dataId = String(response.msg_data_id ?? "").trim() || undefined;
+    return { messageId, dataId };
+  }
+
+  private async getMassSendStatus(
+    messageId: string,
+  ): Promise<WeixinMassStatusResponse> {
+    const token = await this.ensureAccessToken();
+    return await this.apiClient.postJson<WeixinMassStatusResponse>(
+      "/cgi-bin/message/mass/get",
+      token,
+      { msg_id: messageId },
+    );
+  }
+
+  private async waitForMassSendResult(
+    messageId: string,
+  ): Promise<WeixinMassStatusResponse | null> {
+    const deadline = Date.now() + this.publishStatusTimeoutMs;
+    while (Date.now() < deadline) {
+      const status = await this.getMassSendStatus(messageId);
+      const value = status.msg_status?.trim().toUpperCase();
+      if (value === "SEND_SUCCESS") return status;
+      if (value && value !== "SENDING" && value !== "SEND_PENDING") {
+        throw new ProviderError({
+          provider: "weixin",
+          kind: "invalid_response",
+          message: `微信群发失败: ${value}`,
+        });
+      }
+      await this.sleep(this.publishStatusPollIntervalMs);
+    }
+    return null;
+  }
   /**
    * 上传图片到微信
    * @param imageUrl 图片URL
@@ -372,6 +443,21 @@ export class WeixinPublisher implements ContentPublisher, ContentImageUploader {
         };
       }
 
+      if (request.publishMode === "mass") {
+        const idempotencyKey = request.idempotencyKey?.trim();
+        if (!idempotencyKey) {
+          throw new ProviderError({
+            provider: "weixin",
+            kind: "validation",
+            message: "微信群发缺少幂等键 idempotencyKey",
+          });
+        }
+        return await this.massSendDraft({
+          draftMediaId: draft.media_id,
+          idempotencyKey,
+        });
+      }
+
       const publishId = await this.submitDraft(draft.media_id);
       const status = await this.waitForPublishResult(publishId);
       if (!status) {
@@ -402,6 +488,36 @@ export class WeixinPublisher implements ContentPublisher, ContentImageUploader {
       logger.error("微信发布失败:", redactError(error));
       throw error;
     }
+  }
+
+  async massSendDraft(request: MassSendDraftRequest): Promise<PublishResult> {
+    const account = this.getAccount();
+    const idempotencyKey = request.idempotencyKey.trim();
+    if (!idempotencyKey) {
+      throw new ProviderError({
+        provider: "weixin",
+        kind: "validation",
+        message: "微信群发缺少幂等键 idempotencyKey",
+      });
+    }
+    const mass = await this.submitMassSend(
+      request.draftMediaId,
+      idempotencyKey,
+    );
+    const status = await this.waitForMassSendResult(mass.messageId);
+    return {
+      publishId: mass.messageId,
+      draftMediaId: request.draftMediaId,
+      massMessageId: mass.messageId,
+      massDataId: mass.dataId,
+      status: status ? "mass-sent" : "mass-sending",
+      publishedAt: new Date(),
+      platform: "weixin",
+      accountId: account.accountId,
+      ...(!status
+        ? { reason: "微信群发任务仍在处理中，可稍后到公众号后台确认" }
+        : {}),
+    };
   }
 
   /**

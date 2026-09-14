@@ -1,0 +1,57 @@
+import { Logger } from "@zilla/logger";
+import { ToutiaoBrowserSession } from "./browser-session.ts";
+import { loadToutiaoRelayConfig } from "./config.ts";
+import { json, ok, readJson, verifyBearerToken } from "./http.ts";
+import type { ToutiaoDraftRequest } from "./types.ts";
+
+const logger = new Logger("toutiao-relay");
+const config = loadToutiaoRelayConfig();
+const session = new ToutiaoBrowserSession(config);
+
+logger.info(`Toutiao relay listening on http://0.0.0.0:${config.port}`);
+logger.info(`Toutiao browser profile: ${config.profileDir}`);
+
+Deno.addSignalListener?.("SIGINT", () => closeAndExit());
+Deno.addSignalListener?.("SIGTERM", () => closeAndExit());
+
+Deno.serve({ port: config.port }, async (request) => {
+  const url = new URL(request.url);
+
+  if (request.method === "GET" && url.pathname === "/health") {
+    return json({
+      ok: true,
+      service: "toutiao-relay",
+      mode: "browser-draft",
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  const unauthorized = await verifyBearerToken(request, config.token);
+  if (unauthorized) return unauthorized;
+
+  try {
+    if (request.method === "GET" && url.pathname === "/api/toutiao/session") {
+      return ok(await session.getSessionStatus());
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/toutiao/login") {
+      return ok(await session.openLoginPage());
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/toutiao/drafts") {
+      const payload = await readJson<ToutiaoDraftRequest>(request);
+      return ok(await session.saveDraft(payload));
+    }
+
+    return json({ success: false, error: "Not Found" }, { status: 404 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error("Toutiao relay request failed:", message);
+    return json({ success: false, error: message }, { status: 500 });
+  }
+});
+
+async function closeAndExit(): Promise<void> {
+  await session.close();
+  Deno.exit(0);
+}

@@ -144,7 +144,13 @@ export class WeixinApiClient {
 
 function parseJsonResponse(text: string, url: URL): unknown {
   try {
-    return text ? JSON.parse(text) : {};
+    // 微信的群发/发布任务 ID 可能超过 JavaScript 安全整数范围。
+    // 在 JSON.parse 前仅将这些已知 ID 字段的大整数转为字符串，避免状态查询使用错误 ID。
+    const precisionSafeText = text.replace(
+      /("(?:msg_id|msg_data_id|publish_id)"\s*:\s*)(-?\d{16,})(?=\s*[,}])/g,
+      '$1"$2"',
+    );
+    return precisionSafeText ? JSON.parse(precisionSafeText) : {};
   } catch (error) {
     throw new ProviderError({
       provider: "weixin",

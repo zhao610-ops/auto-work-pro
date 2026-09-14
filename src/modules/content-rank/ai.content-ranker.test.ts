@@ -122,6 +122,36 @@ Deno.test("ContentRanker falls back to local explainable ranking when LLM fails"
   assert(ranked[0].score > ranked[1].score);
 });
 
+Deno.test("ContentRanker passes account positioning into ranking prompts", async () => {
+  let promptText = "";
+  const llm: LLMProvider = {
+    initialize: () => Promise.resolve(),
+    refresh: () => Promise.resolve(),
+    setModel: () => {},
+    createChatCompletion: (messages) => {
+      promptText = messages.map((message) => message.content).join("\n");
+      return Promise.resolve({
+        choices: [{ message: { content: "article-1: 82" } }],
+      });
+    },
+  };
+  const ranker = new ContentRanker(llm, "business", {
+    positioning: "服务市场部、品牌部和用户研究部",
+    audience: "关注消费趋势的企业职员",
+  });
+
+  await ranker.rankContents([
+    createContent({
+      id: "article-1",
+      title: "消费趋势报告",
+      content: "消费者行为变化数据",
+    }),
+  ]);
+
+  assert(promptText.includes("服务市场部、品牌部和用户研究部"));
+  assert(promptText.includes("纯 AI 模型"));
+});
+
 Deno.test("rankContentsLocally prefers recent rich primary sources", () => {
   const ranked = rankContentsLocally([
     createContent({

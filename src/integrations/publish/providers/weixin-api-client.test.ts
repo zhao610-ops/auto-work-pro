@@ -51,3 +51,23 @@ Deno.test("WeixinApiClient parses access token response", async () => {
   assertEquals(token.access_token, "token");
   assertEquals(token.expires_in, 7200);
 });
+
+Deno.test("WeixinApiClient preserves large Weixin message IDs", async () => {
+  const client = new WeixinApiClient({
+    fetchImpl: (() =>
+      Promise.resolve(
+        new Response(
+          '{"errcode":0,"msg_id":3418223814652012345,"msg_data_id":2247483650}',
+          { headers: { "content-type": "application/json" } },
+        ),
+      )) as typeof fetch,
+  });
+
+  const result = await client.postJson<{
+    msg_id: string;
+    msg_data_id: number;
+  }>("/cgi-bin/message/mass/sendall", "token", {});
+
+  assertEquals(result.msg_id, "3418223814652012345");
+  assertEquals(result.msg_data_id, 2247483650);
+});

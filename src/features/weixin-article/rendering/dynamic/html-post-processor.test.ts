@@ -55,3 +55,23 @@ Deno.test("postProcessDynamicHtml rejects non-section root", () => {
     "根节点必须是 section",
   );
 });
+
+Deno.test("postProcessDynamicHtml removes generated brief metadata below title", () => {
+  const result = postProcessDynamicHtml(
+    '<section><p>市场标题</p><p style="font-size:13px">商业与产业 · 来源简报 | 2026/09/01</p><p>正文内容</p><p>来源：NielsenIQ</p></section>',
+  );
+
+  assertEquals(result.html.includes("来源简报"), false);
+  assertEquals(result.html.includes("2026/09/01"), false);
+  assertEquals(result.html.includes("来源：NielsenIQ"), true);
+});
+
+Deno.test("postProcessDynamicHtml removes short eyebrow labels before title", () => {
+  const result = postProcessDynamicHtml(
+    '<section><section><p style="font-size:13px">消费者行为信号</p><h1>市场标题</h1></section><p>正文内容</p></section>',
+  );
+
+  assertEquals(result.html.includes("消费者行为信号"), false);
+  assertEquals(result.html.includes("市场标题"), true);
+  assertEquals(result.html.includes("正文内容"), true);
+});

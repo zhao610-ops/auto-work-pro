@@ -248,7 +248,7 @@ features: {
 | 页面改配置     | `storage.runtimeConfig`                   | Dashboard 保存 Profile、数据源、抓取分组和定时规则，下一次运行生效           |
 | 接入日志观测   | `observability`                           | 所有 `Logger` 输出可镜像到 stdout、Axiom、Better Stack 或 HTTP ingest        |
 | 正式发布微信   | `features.article.dryRun: false`          | 本地固定 IP 用 `weixin`，Cloudflare 推荐 `weixin-relay`                      |
-| 选择发布目标   | `features.article.publisher.publishMode`  | `draft` 仅保存草稿；`publish` 达标后公开发布，不执行群发                     |
+| 选择发布目标   | `features.article.publisher.publishMode`  | `draft` 仅保存草稿；`publish` 公开发布；`mass` 提前 10 分钟备稿并定时群发    |
 | 设置发布分数   | `features.article.qualityGate.minScore`   | 自动公开发布的最低质量分；未达标文章自动保留为草稿                           |
 | 多公众号发布   | `features.article.publisher.accountId`    | 对应 `providers.publish.weixin.accounts` 的账号 ID；relay 只做凭证透传代理   |
 | 矩阵运营       | Dashboard `账号矩阵`                      | 编辑账号定位、默认方案和来源分组，运行后展示账号级质量趋势、风险和学习建议   |

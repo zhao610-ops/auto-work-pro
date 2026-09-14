@@ -82,7 +82,7 @@ export async function createWeixinArticleDependencies(
   };
   const effectiveAccountId = options.accountId ??
     config.features.article.publisher.accountId;
-  const publisher = createPublisher(config, effectiveAccountId);
+  const publisher = createArticlePublisher(config, effectiveAccountId);
   const notifier = createArticleNotifier(config);
   const llmResolver = new LlmProviderResolver(config);
   const llmProvider = await llmResolver.getDefaultProvider();
@@ -174,7 +174,7 @@ export async function createWeixinArticleDependencies(
       ),
     ),
     dryRunOutputService: new WeixinArticleDryRunOutputService(artifactStore),
-    contentRanker: new ContentRanker(llmProvider, promptProfile),
+    contentRanker: new ContentRanker(llmProvider, promptProfile, accountBrand),
     editorialTopicService: new WeixinArticleEditorialTopicService(
       llmProvider,
       promptProfile,
@@ -252,7 +252,7 @@ function resolveResearchSearchProviders(
   ) as FetchProviderId[];
 }
 
-function createPublisher(
+export function createArticlePublisher(
   config: ResolvedTrendPublishConfig,
   accountId = config.features.article.publisher.accountId,
 ): WeixinArticlePublisher {

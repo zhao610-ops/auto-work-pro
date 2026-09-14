@@ -136,20 +136,20 @@ dedup-contents -> plan-editorial-topics -> rank-contents
 
 - 第一版先生成质量审稿 artifact 和 Dashboard 视图。
 - AI 审稿失败时使用本地 HTML 合规规则兜底。
-- 已加入有限编辑闭环：只修 reviewer 指出的 `autoFixable` 问题，默认最多 1
+- 已加入有限编辑闭环：只修 reviewer 指出的可安全自动修复问题，默认最多 3
   轮，修完复审。
 
 发布保护：
 
 - 已加入最小质量门禁 `features.article.qualityGate`。
 - 默认开启，只保护真实发布；dry-run 永远继续产出。
-- `publisher.publishMode: "draft"` 只保存草稿；设置为 `"publish"` 后，质量达标会
-  自动公开发布（不是群发）。
+- `publisher.publishMode: "draft"` 只保存草稿；`"publish"` 质量达标后公开发布；
+  `"mass"` 在定时时间前 10 分钟备稿，到点群发。
 - 低于 `minScore`、审稿建议不是 `publish`、存在 blocker 或高危事实问题时，
   自动公开发布会安全降级为草稿，并记录原因。
 - `qualityGate.forcePublish` 可在 Dashboard 或 TS 配置中开启；开启后会绕过门禁并
   直接公开发布，请谨慎使用。
-- `maxRevisionRounds` 控制自动修复轮次，默认 1，建议不要超过 2。
+- `maxRevisionRounds` 控制自动修复轮次，默认最多 3 轮。
 - 抓取阶段会额外输出 `source-health` artifact，Dashboard 的 Sources
   页面会展示每个数据源的成功、空结果和失败原因，方便先处理输入质量。
 

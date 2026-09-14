@@ -306,7 +306,7 @@ function enforceEvidenceDepthGate(
     level: "high",
     issue: evidenceSupport.reason,
     handling:
-      "自动降级为简报；正文只能写已确认动态，并提示关键细节需查阅原文或等待补充证据。",
+      "自动缩小论述范围；正文只能写已确认动态，并提示关键细节需查阅原文或等待补充证据。",
   };
 
   return {
@@ -315,7 +315,7 @@ function enforceEvidenceDepthGate(
     thesis:
       `补充证据不足，本期只围绕“${firstTitle}”做保守梳理，不生成深度判断。`,
     summary:
-      "补充研究缺少可直接支撑主线的证据，已从分析型文章降级为来源简报，避免把判断、建议或方法论写成未被来源支持的结论。",
+      "补充研究缺少可直接支撑主线的证据，已自动缩小论述范围，避免把判断、建议或方法论写成未被来源支持的结论。",
     sections,
     titleDirections: [{
       title: firstTitle,

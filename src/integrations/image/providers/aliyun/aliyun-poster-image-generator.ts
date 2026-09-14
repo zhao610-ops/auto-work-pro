@@ -18,6 +18,7 @@ export interface AliyunPosterImageOptions {
   body_text?: string; // 可选，正文，最多50个字符
   prompt_text_zh?: string; // 可选，中文提示词
   prompt_text_en?: string; // 可选，英文提示词
+  size?: string; // 现代图片模型输出尺寸，例如 1792*768
   generate_mode: "generate" | "sr" | "hrf"; // 必选，生成模式
   generate_num?: 1 | 2 | 3 | 4; // 可选，生成数量，仅在 generate 模式下有效
   auxiliary_parameters?: string; // 可选，sr或hrf模式下的辅助参数
@@ -65,14 +66,20 @@ export class AliyunPosterImageGenerator extends BaseAliyunImageGenerator<
   }
 
   async generate(options: AliyunPosterImageOptions): Promise<string> {
-    // 参数验证
-    this.validateOptions(options);
     const model = options.model || this.model;
+    // 旧海报模型有严格的字段长度限制，现代多模态图片模型不应沿用该限制。
+    this.validateOptions(options, model === ALIYUN_LEGACY_POSTER_IMAGE_MODEL);
 
     if (model !== ALIYUN_LEGACY_POSTER_IMAGE_MODEL) {
       return await this.generateMultimodalImage(
         model,
         buildCoverPrompt(options),
+        {
+          size: options.size ?? "1792*768",
+          n: options.generate_num ?? 1,
+          watermark: false,
+          prompt_extend: true,
+        },
       );
     }
 
@@ -122,19 +129,24 @@ export class AliyunPosterImageGenerator extends BaseAliyunImageGenerator<
     throw new Error("任务成功但未获取到图片URL");
   }
 
-  private validateOptions(options: AliyunPosterImageOptions): void {
+  private validateOptions(
+    options: AliyunPosterImageOptions,
+    legacyPosterModel: boolean,
+  ): void {
     if (!options.title) {
       throw new Error("标题是必需的");
     }
 
-    // 裁剪标题
-    if (options.title.length > 30) {
+    // 以下文本长度限制只属于旧海报模型。
+    if (legacyPosterModel && options.title.length > 30) {
       console.warn(`标题超过30个字符，已自动裁剪。原文: ${options.title}`);
       options.title = options.title.slice(0, 30);
     }
 
     // 裁剪副标题
-    if (options.sub_title && options.sub_title.length > 30) {
+    if (
+      legacyPosterModel && options.sub_title && options.sub_title.length > 30
+    ) {
       console.warn(
         `副标题超过30个字符，已自动裁剪。原文: ${options.sub_title}`,
       );
@@ -142,7 +154,9 @@ export class AliyunPosterImageGenerator extends BaseAliyunImageGenerator<
     }
 
     // 裁剪正文
-    if (options.body_text && options.body_text.length > 50) {
+    if (
+      legacyPosterModel && options.body_text && options.body_text.length > 50
+    ) {
       console.warn(`正文超过50个字符，已自动裁剪。原文: ${options.body_text}`);
       options.body_text = options.body_text.slice(0, 50);
     }
@@ -154,7 +168,7 @@ export class AliyunPosterImageGenerator extends BaseAliyunImageGenerator<
 
     const promptLength = (options.prompt_text_zh?.length || 0) +
       (options.prompt_text_en?.length || 0);
-    if (promptLength > 50) {
+    if (legacyPosterModel && promptLength > 50) {
       console.warn("中英文提示词总长度超过50个字符，将按比例裁剪");
       if (options.prompt_text_zh && options.prompt_text_en) {
         const ratio = 50 / promptLength;
@@ -258,11 +272,10 @@ export class AliyunPosterImageGenerator extends BaseAliyunImageGenerator<
 
 function buildCoverPrompt(options: AliyunPosterImageOptions): string {
   return [
-    "为微信公众号文章生成一张专业封面图。",
-    `主标题：${options.title}`,
-    options.sub_title ? `副标题：${options.sub_title}` : "",
+    "为微信公众号文章生成一张横版高清封面配图。",
+    `文章主题（仅用于理解画面，不得作为文字绘制）：${options.title}`,
     options.prompt_text_zh ? `画面要求：${options.prompt_text_zh}` : "",
     options.prompt_text_en ? `English guidance: ${options.prompt_text_en}` : "",
-    "要求：中文标题清晰可读，版式适合公众号封面；不要二维码、水印、品牌 Logo、可识别人脸或多余小字。",
+    "硬性要求：整张图片不得出现任何文字、字母、数字、Logo、水印、二维码、界面截图或可识别人脸；保持高清、精致、自然，适合公众号封面裁切。",
   ].filter(Boolean).join("\n");
 }

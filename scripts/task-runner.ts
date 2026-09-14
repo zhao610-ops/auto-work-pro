@@ -5,6 +5,7 @@ const DENO = Deno.execPath();
 const CHECK_FILES = [
   "src/index.ts",
   "src/apps/weixin-relay/server.ts",
+  "src/apps/toutiao-relay/server.ts",
   "scripts/run.workflow.ts",
   "src/experiments/article-quality/run.ts",
   "scripts/preview.weixin.ts",
@@ -110,6 +111,7 @@ await new Command()
     ),
   )
   .command("relay", relayCommand())
+  .command("toutiao-relay", toutiaoRelayCommand())
   .command("docker", dockerCommand())
   .command("cf", cloudflareCommand())
   .command(
@@ -166,6 +168,18 @@ function relayCommand() {
           "scripts/install-relay-systemd.ts",
           ...args,
         ])),
+    );
+}
+
+function toutiaoRelayCommand() {
+  return new Command()
+    .description("启动今日头条浏览器 relay。")
+    .action(() =>
+      run(DENO, [
+        "run",
+        "-A",
+        "src/apps/toutiao-relay/server.ts",
+      ])
     );
 }
 
@@ -563,6 +577,7 @@ function printHelp() {
   deno task article             真实创建微信公众号草稿
   deno task preview             生成模板预览
   deno task relay               启动微信发布 relay
+  deno task toutiao:relay       启动今日头条浏览器 relay
   deno task docker              启动 Docker 服务
   deno task docker relay        启动 relay Docker 服务
   deno task cf deploy           部署 Cloudflare Worker
