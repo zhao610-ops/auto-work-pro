@@ -1,6 +1,7 @@
 import { Logger } from "@zilla/logger";
 import { ToutiaoBrowserSession } from "./browser-session.ts";
 import { loadToutiaoRelayConfig } from "./config.ts";
+import { errorHttpStatus, toToutiaoRelayError } from "./errors.ts";
 import { json, ok, readJson, verifyBearerToken } from "./http.ts";
 import type { ToutiaoDraftRequest } from "./types.ts";
 
@@ -45,9 +46,19 @@ Deno.serve({ port: config.port }, async (request) => {
 
     return json({ success: false, error: "Not Found" }, { status: 404 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.error("Toutiao relay request failed:", message);
-    return json({ success: false, error: message }, { status: 500 });
+    const relayError = toToutiaoRelayError(error);
+    logger.error(
+      `Toutiao relay request failed [${relayError.code}]:`,
+      relayError.message,
+    );
+    return json({
+      success: false,
+      error: {
+        code: relayError.code,
+        message: relayError.message,
+        details: relayError.details,
+      },
+    }, { status: errorHttpStatus(relayError.code) });
   }
 });
 

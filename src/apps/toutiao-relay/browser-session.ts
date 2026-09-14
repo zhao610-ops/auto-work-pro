@@ -4,6 +4,7 @@ import {
   chromium,
   type Page,
 } from "npm:playwright-core@1.56.1";
+import { ToutiaoRelayError } from "./errors.ts";
 import type {
   ToutiaoDraftRequest,
   ToutiaoDraftResult,
@@ -22,7 +23,12 @@ export class ToutiaoBrowserSession {
   async getSessionStatus(): Promise<ToutiaoSessionStatus> {
     const page = await this.newPage();
     try {
-      return await this.checkLoginStatus(page);
+      const status = await this.checkLoginStatus(page);
+      if (status.loggedIn) return status;
+      return {
+        ...status,
+        screenshotPath: await this.captureScreenshot(page, "session-expired"),
+      };
     } finally {
       await page.close().catch(() => {});
     }
@@ -47,6 +53,10 @@ export class ToutiaoBrowserSession {
     try {
       const session = await this.checkLoginStatus(page);
       if (!session.loggedIn) {
+        const screenshotPath = await this.captureScreenshot(
+          page,
+          "session-expired",
+        );
         return {
           draftId: request.idempotencyKey ?? crypto.randomUUID(),
           status: "blocked",
@@ -55,6 +65,8 @@ export class ToutiaoBrowserSession {
           savedAt: new Date().toISOString(),
           idempotencyKey: request.idempotencyKey,
           reason: "今日头条账号未登录，请先调用 /api/toutiao/login 完成登录。",
+          errorCode: "AUTH_EXPIRED",
+          screenshotPath,
         };
       }
 
@@ -63,12 +75,18 @@ export class ToutiaoBrowserSession {
         timeout: 45_000,
       });
       await waitForEditor(page);
-      await fillTitle(page, request.title.trim());
-      await fillContent(page, request.contentHtml ?? request.contentText ?? "");
+      const title = request.title.trim();
+      const content = request.contentHtml ?? request.contentText ?? "";
+      await fillTitle(page, title);
+      await verifyTitleReadback(page, title);
+      await fillContent(page, content);
+      await verifyContentReadback(page, content);
 
       const coverPath = await prepareCoverImage(request);
+      let coverUploaded = false;
       if (coverPath) {
         await uploadCover(page, coverPath);
+        coverUploaded = true;
       }
 
       await saveDraft(page);
@@ -76,19 +94,32 @@ export class ToutiaoBrowserSession {
       return {
         draftId: request.idempotencyKey ?? crypto.randomUUID(),
         status: "draft",
-        title: request.title.trim(),
+        title,
         currentUrl: page.url(),
         savedAt: new Date().toISOString(),
         idempotencyKey: request.idempotencyKey,
         screenshotPath,
+        contentVerified: true,
+        coverUploaded,
       };
     } catch (error) {
       const screenshotPath = await this.captureScreenshot(page, "draft-error")
         .catch(() => undefined);
-      throw new Error(
-        `${error instanceof Error ? error.message : String(error)}${
+      const relayError = error instanceof ToutiaoRelayError
+        ? error
+        : new ToutiaoRelayError(
+          "UNKNOWN",
+          error instanceof Error ? error.message : String(error),
+        );
+      throw new ToutiaoRelayError(
+        relayError.code,
+        `${relayError.message}${
           screenshotPath ? `；截图：${screenshotPath}` : ""
         }`,
+        {
+          ...relayError.details,
+          ...(screenshotPath ? { screenshotPath } : {}),
+        },
       );
     } finally {
       await page.close().catch(() => {});
@@ -134,7 +165,8 @@ export class ToutiaoBrowserSession {
       this.context.setDefaultTimeout(20_000);
       return this.context;
     } catch (error) {
-      throw new Error(
+      throw new ToutiaoRelayError(
+        "BROWSER_LAUNCH_FAILED",
         `启动浏览器失败：${
           error instanceof Error ? error.message : String(error)
         }。请安装 Chrome，或设置 TOUTIAO_CHROME_EXECUTABLE_PATH 指向可执行文件。`,
@@ -198,8 +230,15 @@ export class ToutiaoBrowserSession {
 function validateDraftRequest(request: ToutiaoDraftRequest): void {
   const title = request.title?.trim();
   const content = (request.contentHtml ?? request.contentText ?? "").trim();
-  if (!title) throw new Error("title 不能为空");
-  if (!content) throw new Error("contentHtml 或 contentText 不能为空");
+  if (!title) {
+    throw new ToutiaoRelayError("CONTENT_INVALID", "title 不能为空");
+  }
+  if (!content) {
+    throw new ToutiaoRelayError(
+      "CONTENT_INVALID",
+      "contentHtml 或 contentText 不能为空",
+    );
+  }
 }
 
 async function waitForEditor(page: Page): Promise<void> {
@@ -213,7 +252,12 @@ async function waitForEditor(page: Page): Promise<void> {
     },
     undefined,
     { timeout: 30_000 },
-  );
+  ).catch(() => {
+    throw new ToutiaoRelayError(
+      "EDITOR_NOT_FOUND",
+      "30 秒内没有找到今日头条编辑器",
+    );
+  });
 }
 
 async function fillTitle(page: Page, title: string): Promise<void> {
@@ -236,7 +280,7 @@ async function fillTitle(page: Page, title: string): Promise<void> {
       return;
     }
   }
-  throw new Error("没有找到今日头条标题输入框");
+  throw new ToutiaoRelayError("EDITOR_NOT_FOUND", "没有找到今日头条标题输入框");
 }
 
 async function fillContent(page: Page, content: string): Promise<void> {
@@ -283,28 +327,125 @@ async function fillContent(page: Page, content: string): Promise<void> {
         .replaceAll("'", "&#039;");
     }
   }, content);
-  if (!inserted) throw new Error("没有找到今日头条正文编辑器");
+  if (!inserted) {
+    throw new ToutiaoRelayError(
+      "EDITOR_NOT_FOUND",
+      "没有找到今日头条正文编辑器",
+    );
+  }
+}
+
+async function verifyTitleReadback(
+  page: Page,
+  expected: string,
+): Promise<void> {
+  const actual = await page.evaluate(() => {
+    const element = document.querySelector<
+      HTMLInputElement | HTMLTextAreaElement
+    >(
+      "textarea[placeholder*='标题'],input[placeholder*='标题']",
+    );
+    return element?.value?.trim() ?? "";
+  });
+  if (actual !== expected) {
+    throw new ToutiaoRelayError(
+      "CONTENT_READBACK_FAILED",
+      "标题写入后回读不一致",
+      {
+        expectedTitle: expected,
+        actualTitle: actual,
+      },
+    );
+  }
+}
+
+async function verifyContentReadback(
+  page: Page,
+  expected: string,
+): Promise<void> {
+  const expectedText = toPlainText(expected);
+  const actualText = await page.evaluate(() => {
+    const editables = [
+      ...document.querySelectorAll<HTMLElement>("[contenteditable='true']"),
+    ]
+      .filter((element) => {
+        const rect = element.getBoundingClientRect();
+        const label = `${element.getAttribute("placeholder") ?? ""} ${
+          element.getAttribute("data-placeholder") ?? ""
+        }`;
+        return rect.width > 240 && rect.height > 80 && !label.includes("标题");
+      });
+    return editables.sort((left, right) =>
+      right.getBoundingClientRect().height - left.getBoundingClientRect().height
+    )[0]
+      ?.innerText ?? "";
+  });
+  if (!normalizeText(actualText).includes(normalizeText(expectedText))) {
+    throw new ToutiaoRelayError(
+      "CONTENT_READBACK_FAILED",
+      "正文写入后回读不完整",
+      {
+        expectedPreview: expectedText.slice(0, 120),
+        actualPreview: normalizeText(actualText).slice(0, 120),
+      },
+    );
+  }
 }
 
 async function uploadCover(page: Page, imagePath: string): Promise<void> {
-  const input = page.locator("input[type='file']").first();
-  if (await input.count()) {
-    await input.setInputFiles(imagePath);
-    await waitForUploadSettled(page);
-    return;
+  const addCover = page.locator(".article-cover-add").first();
+  if (!await addCover.isVisible().catch(() => false)) {
+    throw new ToutiaoRelayError(
+      "COVER_UPLOAD_FAILED",
+      "没有找到今日头条封面加号卡片",
+    );
   }
 
-  const trigger = page.getByText(/封面|上传|添加图片/).first();
-  if (await trigger.isVisible().catch(() => false)) {
-    const chooserPromise = page.waitForEvent("filechooser", { timeout: 8_000 });
-    await trigger.click();
-    const chooser = await chooserPromise;
-    await chooser.setFiles(imagePath);
-    await waitForUploadSettled(page);
-    return;
+  await addCover.click();
+  const drawer = page.locator(".byte-drawer").filter({ hasText: "上传图片" })
+    .last();
+  const uploadInput = drawer.locator("input[type='file'][accept*='image']")
+    .first();
+  if (!await uploadInput.count()) {
+    throw new ToutiaoRelayError(
+      "COVER_UPLOAD_FAILED",
+      "图片上传抽屉中没有找到文件输入框",
+    );
   }
 
-  throw new Error("没有找到今日头条封面上传控件");
+  await uploadInput.setInputFiles(imagePath).catch((error) => {
+    throw new ToutiaoRelayError(
+      "COVER_UPLOAD_FAILED",
+      "今日头条拒绝接收封面文件",
+      { cause: error instanceof Error ? error.message : String(error) },
+    );
+  });
+  await drawer.getByText(/已上传\s*1\s*张图片/).waitFor({
+    state: "visible",
+    timeout: 20_000,
+  }).catch(() => {
+    throw new ToutiaoRelayError(
+      "COVER_UPLOAD_FAILED",
+      "封面文件上传后未出现在图片抽屉中",
+    );
+  });
+
+  await drawer.getByRole("button", { name: "确定", exact: true }).click();
+  await drawer.waitFor({ state: "hidden", timeout: 15_000 }).catch(() => {
+    throw new ToutiaoRelayError(
+      "COVER_UPLOAD_FAILED",
+      "封面图片确认窗口没有关闭",
+    );
+  });
+  await page.locator(".article-cover-images img").first().waitFor({
+    state: "visible",
+    timeout: 15_000,
+  }).catch(() => {
+    throw new ToutiaoRelayError(
+      "COVER_UPLOAD_FAILED",
+      "封面图片没有回填到文章表单",
+    );
+  });
 }
 
 async function saveDraft(page: Page): Promise<void> {
@@ -331,16 +472,25 @@ async function saveDraft(page: Page): Promise<void> {
     await autoSaveCompleted.isVisible().catch(() => false);
 
   if (!hasAutoSaveStatus) {
-    throw new Error("没有找到今日头条草稿保存控件或自动保存状态");
+    throw new ToutiaoRelayError(
+      "DRAFT_SAVE_FAILED",
+      "没有找到今日头条草稿保存控件或自动保存状态",
+    );
   }
 
   await autoSaveCompleted.waitFor({ state: "visible", timeout: 15_000 })
     .catch(async () => {
       const stillSaving = await autoSaveStarted.isVisible().catch(() => false);
       if (stillSaving) {
-        throw new Error("今日头条草稿仍在保存中，15 秒内未确认完成");
+        throw new ToutiaoRelayError(
+          "DRAFT_SAVE_TIMEOUT",
+          "今日头条草稿仍在保存中，15 秒内未确认完成",
+        );
       }
-      throw new Error("未识别到今日头条草稿保存完成状态");
+      throw new ToutiaoRelayError(
+        "DRAFT_SAVE_FAILED",
+        "未识别到今日头条草稿保存完成状态",
+      );
     });
 }
 
@@ -352,20 +502,28 @@ async function dismissOptionalDialog(page: Page): Promise<void> {
   }
 }
 
-async function waitForUploadSettled(page: Page): Promise<void> {
-  await page.waitForLoadState("networkidle", { timeout: 10_000 })
-    .catch(() => {});
-  await page.waitForTimeout(1000);
-}
-
 async function prepareCoverImage(
   request: ToutiaoDraftRequest,
 ): Promise<string | undefined> {
-  if (request.coverImagePath) return request.coverImagePath;
+  if (request.coverImagePath) {
+    const path = request.coverImagePath;
+    const stat = await Deno.stat(path).catch(() => undefined);
+    if (!stat?.isFile) {
+      throw new ToutiaoRelayError(
+        "COVER_NOT_FOUND",
+        "coverImagePath 指向的封面文件不存在",
+        { path },
+      );
+    }
+    return path;
+  }
   if (!request.coverImageUrl) return undefined;
   const response = await fetch(request.coverImageUrl);
   if (!response.ok) {
-    throw new Error(`下载封面失败：HTTP ${response.status}`);
+    throw new ToutiaoRelayError(
+      "COVER_UPLOAD_FAILED",
+      `下载封面失败：HTTP ${response.status}`,
+    );
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
   const suffix = imageSuffixFromContentType(
@@ -375,6 +533,14 @@ async function prepareCoverImage(
   const path = join(tempDir, `cover${suffix}`);
   await Deno.writeFile(path, bytes);
   return path;
+}
+
+function toPlainText(value: string): string {
+  return value.replaceAll(/<[^>]+>/g, " ");
+}
+
+function normalizeText(value: string): string {
+  return value.replaceAll(/\s+/g, " ").trim();
 }
 
 function imageSuffixFromContentType(contentType: string): string {

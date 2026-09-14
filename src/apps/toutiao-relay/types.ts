@@ -12,6 +12,7 @@ export interface ToutiaoSessionStatus {
   loggedIn: boolean;
   currentUrl?: string;
   message?: string;
+  screenshotPath?: string;
 }
 
 export interface ToutiaoDraftRequest {
@@ -33,4 +34,7 @@ export interface ToutiaoDraftResult {
   idempotencyKey?: string;
   screenshotPath?: string;
   reason?: string;
+  errorCode?: "AUTH_EXPIRED";
+  contentVerified?: boolean;
+  coverUploaded?: boolean;
 }
