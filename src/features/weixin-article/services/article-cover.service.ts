@@ -40,10 +40,27 @@ export interface CoverGenerationResult {
   mediaId: string;
   generated: boolean;
   fallback: boolean;
+  /** source-image 表示使用抓取原文的图片；ai-generated 表示 AI 补图。 */
+  strategy?: "source-image" | "ai-generated" | "fallback";
   generatorType: string;
   model?: string;
   imageUrl?: string;
+  sourceArticleUrl?: string;
+  sourceSelectionReason?: string;
   error?: string;
+}
+
+export interface CoverSourceImage {
+  url: string;
+  width?: number;
+  height?: number;
+  alt?: string;
+  sourceArticleUrl?: string;
+}
+
+export interface CoverGenerationOptions {
+  sourceImages?: CoverSourceImage[];
+  visualBrief?: string;
 }
 
 export interface ArticleCoverTimeoutOptions {
@@ -65,6 +82,8 @@ export class WeixinArticleCoverService {
     private readonly accountBrand?: JsonObject,
     timeoutOptions: ArticleCoverTimeoutOptions = {},
     private readonly defaultCoverMediaId = DEFAULT_COVER_MEDIA_ID,
+    private readonly sourceImageMode: "prefer-source" | "ai-only" =
+      "prefer-source",
   ) {
     this.timeouts = {
       generationMs: normalizeTimeoutMs(
@@ -78,13 +97,21 @@ export class WeixinArticleCoverService {
     };
   }
 
-  public async generateCoverMediaId(title: string): Promise<string> {
-    return (await this.generateCover(title)).mediaId;
+  public async generateCoverMediaId(
+    title: string,
+    options?: CoverGenerationOptions,
+  ): Promise<string> {
+    return (await this.generateCover(title, options)).mediaId;
   }
 
-  public async generateCover(title: string): Promise<CoverGenerationResult> {
+  public async generateCover(
+    title: string,
+    options: CoverGenerationOptions = {},
+  ): Promise<CoverGenerationResult> {
     try {
-      return await this.generateAndUploadCover(title);
+      const sourceImage = this.selectSourceImage(options.sourceImages);
+      if (sourceImage) return await this.uploadSourceCover(sourceImage);
+      return await this.generateAndUploadCover(title, options.visualBrief);
     } catch (error) {
       const redacted = redactError(error);
       logger.warn(
@@ -94,6 +121,7 @@ export class WeixinArticleCoverService {
         mediaId: this.defaultCoverMediaId,
         generated: false,
         fallback: true,
+        strategy: "fallback",
         generatorType: this.imageGeneratorType,
         model: this.imageModel,
         error: redacted.message,
@@ -103,6 +131,7 @@ export class WeixinArticleCoverService {
 
   private async generateAndUploadCover(
     title: string,
+    visualBrief?: string,
   ): Promise<CoverGenerationResult> {
     const coverTitle = getCoverTitle(title);
     const profile = resolvePromptProfile(this.promptProfile);
@@ -119,14 +148,15 @@ export class WeixinArticleCoverService {
           prompt_text_zh: [
             "微信公众号横版封面配图",
             `文章主题：${coverTitle}`,
-            `画面方向：${profile.coverGuidance}`,
+            `画面方向：${visualBrief?.trim() || profile.coverGuidance}`,
             `目标读者：${profile.audience}`,
-            `视觉风格：高端商业杂志质感，${profile.editorialTone}`,
+            `视觉风格：真实、有编辑感的生活纪实摄影，${profile.editorialTone}`,
             `画面元素：${profile.imageGuidance}`,
             brandGuide ? `账号约束：${brandGuide}` : "",
-            "内容相关性：优先使用与文章主题直接相关的物体、环境和行为表达核心概念，避免空泛的科技背景、增长箭头、办公桌和报表",
-            "构图要求：主体明确、层次丰富、自然光影、细节清晰，重要内容位于画面中央安全区域，左右允许裁切",
-            "严格限制：文章标题仅用于理解主题，画面中不得出现任何中文、英文、数字、字母、Logo、水印、二维码、界面截图或可识别人脸",
+            "内容相关性：先从标题提取具体经济主题、影响对象和生活场景；人物必须在与标题对应的环境中做自然动作，避免无关的漂亮人物或空泛风景",
+            "构图要求：一个明确主体与一个生活场景，层次丰富、自然光影、真实材质和适度留白；重要内容位于画面中央安全区域，左右允许裁切",
+            "人物规则：如出现女性，只能是22岁以上的年轻成年女性，穿着日常、淡妆或接近素颜、自然动作；允许侧脸、背影、远景或手部，不做模特摆拍、网红写真或性感化表达",
+            "严格限制：文章标题仅用于理解主题，画面中不得出现任何中文、英文、数字、字母、Logo、水印、二维码、界面截图、图表、K线、硬币、增长箭头、商务楼宣传照、蓝紫科技光效或可识别人脸",
           ].filter(Boolean).join(" | "),
           size: DEFAULT_COVER_IMAGE_SIZE,
           generate_mode: "generate",
@@ -145,11 +175,68 @@ export class WeixinArticleCoverService {
       ),
       generated: true,
       fallback: false,
+      strategy: "ai-generated",
       generatorType: this.imageGeneratorType,
       model: this.imageModel,
       imageUrl,
     };
   }
+
+  private selectSourceImage(
+    candidates: CoverSourceImage[] | undefined,
+  ): CoverSourceImage | undefined {
+    if (this.sourceImageMode !== "prefer-source" || !candidates?.length) {
+      return undefined;
+    }
+    const seen = new Set<string>();
+    return candidates.find((candidate) => {
+      const url = candidate.url.trim();
+      if (!isPublicImageUrl(url) || seen.has(url)) return false;
+      seen.add(url);
+      if (isUnsuitableSourceImage(url, candidate.alt)) return false;
+      if (
+        Number.isFinite(candidate.width) && Number.isFinite(candidate.height) &&
+        ((candidate.width ?? 0) < 960 || (candidate.height ?? 0) < 420)
+      ) return false;
+      return true;
+    });
+  }
+
+  private async uploadSourceCover(
+    sourceImage: CoverSourceImage,
+  ): Promise<CoverGenerationResult> {
+    const imageUrl = sourceImage.url.trim();
+    const mediaId = await withTimeout(
+      () => this.publisher.uploadImage(imageUrl),
+      this.timeouts.uploadMs,
+      "原文封面上传微信超时",
+    );
+    return {
+      mediaId,
+      generated: false,
+      fallback: false,
+      strategy: "source-image",
+      generatorType: "SOURCE_IMAGE",
+      imageUrl,
+      sourceArticleUrl: sourceImage.sourceArticleUrl,
+      sourceSelectionReason: "入选原文中找到可用的真实主图，优先使用原图",
+    };
+  }
+}
+
+function isPublicImageUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function isUnsuitableSourceImage(url: string, alt?: string): boolean {
+  const value = `${url} ${alt ?? ""}`.toLowerCase();
+  return /(?:logo|icon|avatar|author|profile|social|share|banner|advert|sponsor|qrcode|qr-code|favicon)/
+    .test(value);
 }
 
 function normalizeTimeoutMs(

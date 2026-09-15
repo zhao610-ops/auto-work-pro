@@ -1,5 +1,5 @@
 import { RankResult } from "@src/core/ports/content-ranker.ts";
-import { ScrapedContent } from "@src/core/ports/content-scraper.ts";
+import { Media, ScrapedContent } from "@src/core/ports/content-scraper.ts";
 import { ContentSummarizer } from "@src/core/ports/content-summarizer.ts";
 import { INotifier } from "@src/core/ports/notifier.ts";
 import type { EditorialDecision } from "@src/features/weixin-article/domain/editorial-decision.ts";
@@ -157,6 +157,7 @@ export class WeixinArticleContentProcessService {
     try {
       const originalTitle = content.title;
       const originalContent = content.content;
+      content.media = mergeContentImages(content.media, originalContent);
       content.metadata.originalTitle ??= originalTitle;
       content.metadata.originalContentExcerpt ??= truncateText(
         originalContent,
@@ -203,6 +204,27 @@ export class WeixinArticleContentProcessService {
       `[正文深抓] ${content.url} 使用 ${result.provider} 补全文: ${result.originalContentLength} -> ${result.hydratedContentLength}`,
     );
   }
+}
+
+function mergeContentImages(
+  existing: Media[] | undefined,
+  content: string,
+): Media[] {
+  const urls = new Set((existing ?? []).map((item) => item.url));
+  const media = [...(existing ?? [])];
+  const patterns = [
+    /!\[[^\]]*\]\((https?:\/\/[^\s)]+)(?:\s+[^)]*)?\)/gi,
+    /<img\b[^>]*\bsrc=["'](https?:\/\/[^"']+)["'][^>]*>/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of content.matchAll(pattern)) {
+      const url = match[1]?.trim();
+      if (!url || urls.has(url)) continue;
+      urls.add(url);
+      media.push({ url, type: "image", size: { width: 0, height: 0 } });
+    }
+  }
+  return media;
 }
 
 function truncateText(value: string, maxLength: number): string {

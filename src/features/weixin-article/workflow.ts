@@ -41,6 +41,27 @@ import type { FactVerificationReport } from "@src/features/weixin-article/servic
 
 const logger = new Logger("weixin-article-workflow");
 
+function selectCoverSourceImages(
+  contents: ScrapedContent[],
+  preferredArticleIds: string[],
+) {
+  const byId = new Map(contents.map((content) => [content.id, content]));
+  const ordered = [
+    ...preferredArticleIds.map((id) => byId.get(id)).filter(
+      (content): content is ScrapedContent => Boolean(content),
+    ),
+    ...contents.filter((content) => !preferredArticleIds.includes(content.id)),
+  ];
+  return ordered.flatMap((content) =>
+    (content.media ?? []).map((media) => ({
+      url: media.url,
+      width: media.size?.width,
+      height: media.size?.height,
+      sourceArticleUrl: content.url,
+    }))
+  );
+}
+
 interface WeixinWorkflowEnv {
   id: string;
   name: string;
@@ -594,9 +615,15 @@ export class WeixinArticleWorkflow {
               fallback: false,
               generatorType: "dry-run",
             }
-            : await this.dependencies.coverService.generateCover(
-              summaryTitle,
-            );
+            : await this.dependencies.coverService.generateCover(summaryTitle, {
+              sourceImages: selectCoverSourceImages(
+                await artifactStore.getJson<ScrapedContent[]>(
+                  planInputContentsRef,
+                ),
+                articlePlan.sourceArticleIds,
+              ),
+              visualBrief: articlePlan.coverDirection.visualBrief,
+            });
           const ref = await artifactStore.putJson(
             artifactStore.createRunKey(runId, "11-cover", "json"),
             result,

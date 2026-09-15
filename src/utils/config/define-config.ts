@@ -286,6 +286,16 @@ export interface ArticleNotificationsConfig {
 export interface ArticleCoverConfig {
   /** 是否生成封面图。生成失败时会回退到内置兜底封面。 */
   enabled?: boolean;
+  /**
+   * 封面来源策略。
+   *
+   * - "prefer-source": 优先使用入选原文中合格的主图；没有合格图片时再 AI 生图。
+   * - "ai-only": 始终使用 AI 生图。
+   *
+   * 使用原图前仍会过滤 Logo、二维码、广告横幅等明显不适合作为封面的图片。
+   * 原图的二次发布权需要由运营方确认。
+   */
+  sourceImageMode?: "prefer-source" | "ai-only";
   /** 封面图生成 provider。支持 "dashscope" 和 "minimax"。 */
   provider?: ArticleImageProvider;
   /** provider 模型 ID，例如 DashScope 的 "qwen-image-2.0-pro" 或 MiniMax 的 "image-01"。 */
@@ -610,6 +620,7 @@ export interface ResolvedTrendPublishConfig {
       };
       cover: {
         enabled: boolean;
+        sourceImageMode: "prefer-source" | "ai-only";
         provider: ArticleImageProvider;
         model: string;
       };
@@ -909,6 +920,7 @@ export function resolveTrendPublishConfig(
         },
         cover: {
           enabled: article.cover?.enabled ?? true,
+          sourceImageMode: article.cover?.sourceImageMode ?? "prefer-source",
           provider: coverProvider,
           model: resolveArticleImageModel(
             coverProvider,

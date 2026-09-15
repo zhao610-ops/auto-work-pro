@@ -159,6 +159,9 @@ export async function createWeixinArticleDependencies(
         "cover",
       ),
       accountBrand,
+      undefined,
+      undefined,
+      config.features.article.cover.sourceImageMode,
     ),
     renderService: new WeixinArticleRenderService(
       new WeixinArticleTemplateRenderer(

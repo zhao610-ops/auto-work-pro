@@ -389,6 +389,7 @@ export async function resolveArticleRuntimeConfig(
 
   next.features.article.cover = {
     enabled: article.cover.enabled && coverImage.enabled,
+    sourceImageMode: article.cover.sourceImageMode,
     provider: coverImage.provider,
     model: resolveImageModel(coverImage.provider, "cover", [
       article.cover.overrides?.model,
@@ -587,6 +588,7 @@ export function defaultArticleProfileConfig(
     },
     cover: {
       enabled: article.cover.enabled,
+      sourceImageMode: article.cover.sourceImageMode,
       imageProfileId: DEFAULT_COVER_IMAGE_CAPABILITY_ID,
       overrides: {
         model: article.cover.model,
@@ -660,6 +662,10 @@ export function readArticleConfig(
     },
     cover: {
       enabled: booleanValue(cover.enabled) ?? fallback.cover.enabled,
+      sourceImageMode: readCoverSourceImageMode(
+        cover.sourceImageMode,
+        fallback.cover.sourceImageMode,
+      ),
       imageProfileId: stringValue(cover.imageProfileId) ??
         fallback.cover.imageProfileId,
       overrides: {
@@ -782,6 +788,7 @@ function articleConfigToResolvedFallback(
     notifications: { channels: [] },
     cover: {
       enabled: config.cover.enabled,
+      sourceImageMode: config.cover.sourceImageMode,
       provider: "dashscope",
       model: config.cover.overrides?.model ?? "",
     },
@@ -1138,6 +1145,14 @@ function readBodyImageMode(
   return text === "off" || text === "missing" || text === "all"
     ? text
     : fallback;
+}
+
+function readCoverSourceImageMode(
+  value: JsonValue | undefined,
+  fallback: "prefer-source" | "ai-only",
+): "prefer-source" | "ai-only" {
+  const text = stringValue(value);
+  return text === "prefer-source" || text === "ai-only" ? text : fallback;
 }
 
 function readVectorStore(

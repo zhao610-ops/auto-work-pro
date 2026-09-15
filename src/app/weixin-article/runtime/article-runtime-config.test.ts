@@ -133,6 +133,10 @@ Deno.test("runtime config resolves capability references and feature overrides",
   assertEquals(resolved.config.features.article.bodyImages.mode, "all");
   assertEquals(resolved.config.features.article.bodyImages.count, 2);
   assertEquals(resolved.config.features.article.bodyImages.size, "1024*1024");
+  assertEquals(
+    resolved.config.features.article.cover.sourceImageMode,
+    "prefer-source",
+  );
   assertEquals(resolved.snapshot.profile?.["id"], detail.profile.id);
 });
 

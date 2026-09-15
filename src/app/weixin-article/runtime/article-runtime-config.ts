@@ -40,6 +40,7 @@ export interface ArticleFeatureProfileConfig {
   };
   cover: {
     enabled: boolean;
+    sourceImageMode: "prefer-source" | "ai-only";
     imageProfileId: string;
     overrides?: {
       model?: string;

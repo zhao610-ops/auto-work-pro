@@ -293,6 +293,8 @@ export default defineConfig({
        */
       cover: {
         enabled: true,
+        // 优先使用入选原文中的合格主图；没有合格图时才使用 AI 生图。
+        sourceImageMode: "prefer-source",
         provider: "dashscope",
         model: "qwen-image-2.0-pro",
       },

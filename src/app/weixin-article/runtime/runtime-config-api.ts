@@ -696,6 +696,12 @@ async function validateArticlePatch(
 
   const cover = objectValue(patch.cover);
   if (cover) {
+    validateStringEnum(
+      cover.sourceImageMode,
+      "article.cover.sourceImageMode",
+      ["prefer-source", "ai-only"],
+      issues,
+    );
     await validateCapabilityReference(
       store,
       cover.imageProfileId,

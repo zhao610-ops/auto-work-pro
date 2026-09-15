@@ -81,6 +81,60 @@ Deno.test("cover service records fallback reason", async () => {
   assertEquals(uploaded, []);
 });
 
+Deno.test("cover service prefers a qualified source image", async () => {
+  const uploaded: string[] = [];
+  const service = new WeixinArticleCoverService(
+    {
+      uploadImage: async (url: string) => (uploaded.push(url), "source-media"),
+    },
+    {
+      getGenerator: async () => ({
+        initialize: async () => {},
+        refresh: async () => {},
+        saveToFile: async () => {},
+        generate: async () => "https://example.com/ai.png",
+      }),
+    },
+  );
+
+  const result = await service.generateCover("菜价变化", {
+    sourceImages: [{
+      url: "https://images.example.com/market.jpg",
+      width: 1600,
+      height: 900,
+      sourceArticleUrl: "https://news.example.com/article",
+    }],
+  });
+
+  assertEquals(result.strategy, "source-image");
+  assertEquals(result.generated, false);
+  assertEquals(result.imageUrl, "https://images.example.com/market.jpg");
+  assertEquals(uploaded, ["https://images.example.com/market.jpg"]);
+});
+
+Deno.test("cover service falls back to AI when source image is unsuitable", async () => {
+  const uploaded: string[] = [];
+  const service = new WeixinArticleCoverService(
+    { uploadImage: async (url: string) => (uploaded.push(url), "ai-media") },
+    {
+      getGenerator: async () => ({
+        initialize: async () => {},
+        refresh: async () => {},
+        saveToFile: async () => {},
+        generate: async () => "https://example.com/ai.png",
+      }),
+    },
+  );
+
+  const result = await service.generateCover("菜价变化", {
+    sourceImages: [{ url: "https://images.example.com/logo.png" }],
+  });
+
+  assertEquals(result.strategy, "ai-generated");
+  assertEquals(result.generated, true);
+  assertEquals(uploaded, ["https://example.com/ai.png"]);
+});
+
 Deno.test("cover service falls back when image generation hangs", async () => {
   const uploaded: string[] = [];
   const service = new WeixinArticleCoverService(
