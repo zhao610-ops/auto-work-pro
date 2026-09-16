@@ -83,6 +83,7 @@ Deno.test("cover service records fallback reason", async () => {
 
 Deno.test("cover service prefers a qualified source image", async () => {
   const uploaded: string[] = [];
+  let request: Record<string, unknown> | undefined;
   const service = new WeixinArticleCoverService(
     {
       uploadImage: async (url: string) => (uploaded.push(url), "source-media"),
@@ -92,7 +93,10 @@ Deno.test("cover service prefers a qualified source image", async () => {
         initialize: async () => {},
         refresh: async () => {},
         saveToFile: async () => {},
-        generate: async () => "https://example.com/ai.png",
+        generate: async (options) => {
+          request = options as unknown as Record<string, unknown>;
+          return "https://example.com/ai.png";
+        },
       }),
     },
   );
@@ -104,6 +108,43 @@ Deno.test("cover service prefers a qualified source image", async () => {
       height: 900,
       sourceArticleUrl: "https://news.example.com/article",
     }],
+  });
+
+  assertEquals(result.strategy, "source-image-enhanced");
+  assertEquals(result.generated, true);
+  assertEquals(result.imageUrl, "https://example.com/ai.png");
+  assertEquals(uploaded, ["https://example.com/ai.png"]);
+  assertEquals(
+    request?.source_image_url,
+    "https://images.example.com/market.jpg",
+  );
+  assertEquals(request?.size, DEFAULT_COVER_IMAGE_SIZE);
+  assertEquals(
+    String(request?.prompt_text_zh).includes("只做以下三项处理"),
+    true,
+  );
+});
+
+Deno.test("cover service uses the original image when AI enhancement fails", async () => {
+  const uploaded: string[] = [];
+  const service = new WeixinArticleCoverService(
+    {
+      uploadImage: async (url: string) => (uploaded.push(url), "source-media"),
+    },
+    {
+      getGenerator: async () => ({
+        initialize: async () => {},
+        refresh: async () => {},
+        saveToFile: async () => {},
+        generate: async () => {
+          throw new Error("image edit failed");
+        },
+      }),
+    },
+  );
+
+  const result = await service.generateCover("菜价变化", {
+    sourceImages: [{ url: "https://images.example.com/market.jpg" }],
   });
 
   assertEquals(result.strategy, "source-image");

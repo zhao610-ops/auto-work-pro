@@ -18,6 +18,8 @@ export interface AliyunPosterImageOptions {
   body_text?: string; // 可选，正文，最多50个字符
   prompt_text_zh?: string; // 可选，中文提示词
   prompt_text_en?: string; // 可选，英文提示词
+  /** 原始封面图 URL。传入后使用图像编辑模式而不是文生图。 */
+  source_image_url?: string;
   size?: string; // 现代图片模型输出尺寸，例如 1792*768
   generate_mode: "generate" | "sr" | "hrf"; // 必选，生成模式
   generate_num?: 1 | 2 | 3 | 4; // 可选，生成数量，仅在 generate 模式下有效
@@ -70,6 +72,13 @@ export class AliyunPosterImageGenerator extends BaseAliyunImageGenerator<
     // 旧海报模型有严格的字段长度限制，现代多模态图片模型不应沿用该限制。
     this.validateOptions(options, model === ALIYUN_LEGACY_POSTER_IMAGE_MODEL);
 
+    if (
+      options.source_image_url &&
+      model === ALIYUN_LEGACY_POSTER_IMAGE_MODEL
+    ) {
+      throw new Error("旧版海报模型不支持原图编辑");
+    }
+
     if (model !== ALIYUN_LEGACY_POSTER_IMAGE_MODEL) {
       return await this.generateMultimodalImage(
         model,
@@ -80,6 +89,7 @@ export class AliyunPosterImageGenerator extends BaseAliyunImageGenerator<
           watermark: false,
           prompt_extend: true,
         },
+        options.source_image_url ? [options.source_image_url] : [],
       );
     }
 

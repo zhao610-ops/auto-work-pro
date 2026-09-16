@@ -161,6 +161,7 @@ export abstract class BaseAliyunImageGenerator<
     model: string,
     prompt: string,
     parameters: Record<string, unknown> = {},
+    inputImages: string[] = [],
   ): Promise<string> {
     try {
       const response = await axios.post<AliyunMultimodalGenerationResponse>(
@@ -171,7 +172,10 @@ export abstract class BaseAliyunImageGenerator<
             messages: [
               {
                 role: "user",
-                content: [{ text: prompt }],
+                content: [
+                  ...inputImages.map((image) => ({ image })),
+                  { text: prompt },
+                ],
               },
             ],
           },

@@ -16,7 +16,8 @@ import { formatAccountBrandGuide } from "@src/prompts/account-brand.ts";
 const logger = new Logger("weixin-article-cover-service");
 const DEFAULT_COVER_GENERATION_TIMEOUT_MS = 150_000;
 const DEFAULT_COVER_UPLOAD_TIMEOUT_MS = 45_000;
-export const DEFAULT_COVER_IMAGE_SIZE = "1792*768";
+/** 2.35:1，且宽高都是 16 的倍数，避免图片 API 自动改尺寸。 */
+export const DEFAULT_COVER_IMAGE_SIZE = "1504*640";
 export const DEFAULT_COVER_MEDIA_ID =
   "SwCSRjrdGJNaWioRQUHzgF68BHFkSlb_f5xlTquvsOSA6Yy0ZRjFo0aW9eS3JJu_";
 
@@ -32,6 +33,7 @@ interface ArticleCoverImageRequest {
   sub_title?: string;
   prompt_text_zh?: string;
   size?: string;
+  source_image_url?: string;
   generate_mode: "generate";
   generate_num: 1;
 }
@@ -40,8 +42,12 @@ export interface CoverGenerationResult {
   mediaId: string;
   generated: boolean;
   fallback: boolean;
-  /** source-image 表示使用抓取原文的图片；ai-generated 表示 AI 补图。 */
-  strategy?: "source-image" | "ai-generated" | "fallback";
+  /** source-image-enhanced 表示原图经 AI 去文字和清晰度增强后使用。 */
+  strategy?:
+    | "source-image"
+    | "source-image-enhanced"
+    | "ai-generated"
+    | "fallback";
   generatorType: string;
   model?: string;
   imageUrl?: string;
@@ -110,7 +116,9 @@ export class WeixinArticleCoverService {
   ): Promise<CoverGenerationResult> {
     try {
       const sourceImage = this.selectSourceImage(options.sourceImages);
-      if (sourceImage) return await this.uploadSourceCover(sourceImage);
+      if (sourceImage) {
+        return await this.enhanceAndUploadSourceCover(sourceImage);
+      }
       return await this.generateAndUploadCover(title, options.visualBrief);
     } catch (error) {
       const redacted = redactError(error);
@@ -221,6 +229,59 @@ export class WeixinArticleCoverService {
       sourceArticleUrl: sourceImage.sourceArticleUrl,
       sourceSelectionReason: "入选原文中找到可用的真实主图，优先使用原图",
     };
+  }
+
+  private async enhanceAndUploadSourceCover(
+    sourceImage: CoverSourceImage,
+  ): Promise<CoverGenerationResult> {
+    try {
+      if (this.imageGeneratorType !== ImageGeneratorType.ALIYUN_POSTER) {
+        throw new Error("当前封面图片服务不支持原图编辑");
+      }
+      const imageUrl = await withTimeout(
+        async () => {
+          const imageGenerator = await this.imageGeneratorResolver
+            .getGenerator(this.imageGeneratorType);
+          return await imageGenerator.generate({
+            model: this.imageModel,
+            title: "原文封面清理",
+            source_image_url: sourceImage.url.trim(),
+            prompt_text_zh: [
+              "这是一张原始新闻/文章封面图，请严格以它为唯一画面基础进行编辑",
+              "只做以下三项处理：移除画面内所有可见文字、数字、字母、Logo、角标和水印，并用周围原有纹理自然补全；增强清晰度、锐度与细节；调整为横版公众号封面",
+              "必须保留原图的主体、人物、物体、背景、色彩、光线、透视和构图，不得新增、删除、替换或移动人物、物体和场景，不得改变人物外貌",
+              "输出尺寸 1504×640（2.35:1）；原图比例不匹配时，围绕主体进行自然裁切或自然延展，禁止拉伸变形",
+              "最终画面不得包含任何新文字、数字、字母、Logo、水印、边框或拼贴效果",
+            ].join(" | "),
+            size: DEFAULT_COVER_IMAGE_SIZE,
+            generate_mode: "generate",
+            generate_num: 1,
+          });
+        },
+        this.timeouts.generationMs,
+        "原文封面处理超时",
+      );
+      return {
+        mediaId: await withTimeout(
+          () => this.publisher.uploadImage(imageUrl),
+          this.timeouts.uploadMs,
+          "处理后封面上传微信超时",
+        ),
+        generated: true,
+        fallback: false,
+        strategy: "source-image-enhanced",
+        generatorType: this.imageGeneratorType,
+        model: this.imageModel,
+        imageUrl,
+        sourceArticleUrl: sourceImage.sourceArticleUrl,
+        sourceSelectionReason:
+          "入选原文主图已由 AI 去文字、增强清晰度并调整为公众号封面比例",
+      };
+    } catch (error) {
+      const message = redactError(error).message;
+      logger.warn(`[封面生成] 原文封面处理失败，改用原图: ${message}`);
+      return await this.uploadSourceCover(sourceImage);
+    }
   }
 }
 
