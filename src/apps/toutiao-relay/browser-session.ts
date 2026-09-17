@@ -6,10 +6,17 @@ import {
 } from "npm:playwright-core@1.56.1";
 import { ToutiaoRelayError } from "./errors.ts";
 import {
+  assertScheduleContentLength,
+  assertScheduleCoverProvided,
+} from "./publication-preflight.ts";
+import { ToutiaoArticleRecordStore } from "./article-record-store.ts";
+import { findMatchingDraft, type RemoteArticle } from "./reconciliation.ts";
+import {
   resolveToutiaoScheduleTarget,
   type ToutiaoScheduleTarget,
 } from "./schedule.ts";
 import type {
+  ToutiaoArticleRecord,
   ToutiaoDraftRequest,
   ToutiaoDraftResult,
   ToutiaoRelayConfig,
@@ -20,11 +27,16 @@ import type {
 
 const PUBLISH_URL = "https://mp.toutiao.com/profile_v4/graphic/publish";
 const LOGIN_URL = "https://mp.toutiao.com/auth/page/login/";
+const DRAFT_LIST_URL = "https://mp.toutiao.com/profile_v4/manage/draft";
+const CONTENT_LIST_URL = "https://mp.toutiao.com/profile_v4/manage/content/all";
 
 export class ToutiaoBrowserSession {
   private context?: BrowserContext;
+  private readonly records: ToutiaoArticleRecordStore;
 
-  constructor(private readonly config: ToutiaoRelayConfig) {}
+  constructor(private readonly config: ToutiaoRelayConfig) {
+    this.records = new ToutiaoArticleRecordStore(config.statePath);
+  }
 
   async getSessionStatus(): Promise<ToutiaoSessionStatus> {
     const page = await this.newPage();
@@ -55,6 +67,8 @@ export class ToutiaoBrowserSession {
 
   async saveDraft(request: ToutiaoDraftRequest): Promise<ToutiaoDraftResult> {
     validateDraftRequest(request);
+    const existing = await this.findExistingRecord(request, "draft");
+    if (existing) return draftResultFromRecord(existing);
     const page = await this.newPage();
     try {
       const session = await this.checkLoginStatus(page);
@@ -76,16 +90,18 @@ export class ToutiaoBrowserSession {
         };
       }
 
-      await page.goto(PUBLISH_URL, {
-        waitUntil: "domcontentloaded",
-        timeout: 45_000,
-      });
+      await openFreshPublishPage(page);
       const article = await prepareArticle(page, request);
 
       await saveDraft(page);
       const screenshotPath = await this.captureScreenshot(page, "draft-saved");
+      const record = await this.persistReconciledRecord({
+        request,
+        status: "draft",
+      });
       return {
-        draftId: request.idempotencyKey ?? crypto.randomUUID(),
+        draftId: record?.articleId ?? request.idempotencyKey ??
+          crypto.randomUUID(),
         status: "draft",
         title: article.title,
         currentUrl: page.url(),
@@ -94,6 +110,8 @@ export class ToutiaoBrowserSession {
         screenshotPath,
         contentVerified: true,
         coverUploaded: article.coverUploaded,
+        articleId: record?.articleId,
+        reconciledAt: record?.reconciledAt,
       };
     } catch (error) {
       const screenshotPath = await this.captureScreenshot(page, "draft-error")
@@ -123,6 +141,15 @@ export class ToutiaoBrowserSession {
     request: ToutiaoScheduleRequest,
   ): Promise<ToutiaoScheduledResult> {
     validateDraftRequest(request);
+    // 头条的定时发布要求“原创封面”。必须在写入编辑器前校验，
+    // 否则会留下无法提交且难以恢复的半成品草稿。
+    assertScheduleCoverProvided(request);
+    assertScheduleContentLength(request);
+    const coverPath = await requireScheduleCover(request);
+    const existing = await this.findExistingRecord(request, "scheduled");
+    if (existing?.status === "scheduled") {
+      return scheduledResultFromRecord(existing);
+    }
     const page = await this.newPage();
     try {
       const session = await this.checkLoginStatus(page);
@@ -143,12 +170,39 @@ export class ToutiaoBrowserSession {
         };
       }
 
-      await page.goto(PUBLISH_URL, {
-        waitUntil: "domcontentloaded",
-        timeout: 45_000,
-      });
-      const article = await prepareArticle(page, request);
-      await saveDraft(page);
+      let article: PreparedArticle;
+      let record: ToutiaoArticleRecord | undefined;
+      if (existing) {
+        await openExistingDraftForEditing(page, existing);
+        await uploadCover(page, coverPath);
+        article = { title: existing.title, coverUploaded: true };
+        record = await this.records.upsert({
+          ...existing,
+          coverUploaded: true,
+          updatedAt: new Date().toISOString(),
+        });
+      } else {
+        await openFreshPublishPage(page);
+        article = await prepareArticle(page, {
+          ...request,
+          coverImagePath: coverPath,
+        });
+        await saveDraft(page);
+
+        // 先在草稿列表获取真实 ID，再确认定时；即使最后一步网络超时，也可安全反查。
+        record = await this.persistReconciledRecord({
+          request,
+          status: "draft",
+        });
+        if (record) {
+          record = await this.records.upsert({
+            ...record,
+            contentVerified: true,
+            coverUploaded: article.coverUploaded,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      }
 
       const target = resolveToutiaoScheduleTarget(
         new Date(),
@@ -156,9 +210,19 @@ export class ToutiaoBrowserSession {
         request.scheduledAt,
       );
       await configureSchedule(page, target);
+      const scheduledRecord = record && request.idempotencyKey
+        ? await this.records.upsert({
+          ...record,
+          status: "scheduled",
+          scheduledFor: target.at.toISOString(),
+          updatedAt: new Date().toISOString(),
+          reconciledAt: new Date().toISOString(),
+        })
+        : record;
       const screenshotPath = await this.captureScreenshot(page, "scheduled");
       return {
-        draftId: request.idempotencyKey ?? crypto.randomUUID(),
+        draftId: scheduledRecord?.articleId ?? request.idempotencyKey ??
+          crypto.randomUUID(),
         status: "scheduled",
         title: article.title,
         currentUrl: page.url(),
@@ -167,6 +231,8 @@ export class ToutiaoBrowserSession {
         screenshotPath,
         contentVerified: true,
         coverUploaded: article.coverUploaded,
+        articleId: scheduledRecord?.articleId,
+        reconciledAt: scheduledRecord?.reconciledAt,
       };
     } catch (error) {
       const screenshotPath = await this.captureScreenshot(
@@ -198,6 +264,112 @@ export class ToutiaoBrowserSession {
   async close(): Promise<void> {
     await this.context?.close().catch(() => {});
     this.context = undefined;
+  }
+
+  async reconcileArticle(input: {
+    idempotencyKey?: string;
+    title?: string;
+  }): Promise<ToutiaoArticleRecord> {
+    const record = input.idempotencyKey
+      ? await this.records.get(input.idempotencyKey)
+      : input.title
+      ? await this.records.findByTitle(input.title.trim())
+      : undefined;
+    if (!record) {
+      throw new ToutiaoRelayError(
+        "RECONCILE_NOT_FOUND",
+        "没有找到对应的本地头条任务记录，请提供已提交任务的 idempotencyKey 或精确标题",
+      );
+    }
+
+    const page = await this.newPage();
+    try {
+      const session = await this.checkLoginStatus(page);
+      if (!session.loggedIn) {
+        throw new ToutiaoRelayError(
+          "AUTH_EXPIRED",
+          "今日头条账号未登录，无法反查发布状态",
+        );
+      }
+      const remote = await findRemoteArticleByTitle(page, record.title);
+      if (!remote) {
+        if (record.status === "pending_reconciliation") {
+          throw new ToutiaoRelayError(
+            "RECONCILE_NOT_FOUND",
+            "草稿列表尚未检索到该文章；请稍后重试，Relay 已保留幂等记录并不会重复创建",
+          );
+        }
+        return record;
+      }
+      const now = new Date().toISOString();
+      return await this.records.upsert({
+        ...record,
+        articleId: remote.articleId,
+        status: remote.status,
+        currentUrl: remote.currentUrl,
+        updatedAt: now,
+        reconciledAt: now,
+      });
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
+  private async findExistingRecord(
+    request: ToutiaoDraftRequest,
+    operation: "draft" | "scheduled",
+  ): Promise<ToutiaoArticleRecord | undefined> {
+    if (!request.idempotencyKey) return undefined;
+    const record = await this.records.get(request.idempotencyKey);
+    if (!record) return undefined;
+    if (record.title !== request.title.trim()) {
+      throw new ToutiaoRelayError(
+        "IDEMPOTENCY_CONFLICT",
+        "同一个 idempotencyKey 已关联另一篇头条文章，拒绝覆盖",
+        { previousTitle: record.title, requestedTitle: request.title.trim() },
+      );
+    }
+    if (
+      operation === "draft" &&
+      (record.status === "draft" || record.status === "pending_reconciliation")
+    ) {
+      return record;
+    }
+    if (
+      operation === "scheduled" &&
+      (record.status === "scheduled" || record.status === "draft")
+    ) {
+      return record;
+    }
+    throw new ToutiaoRelayError(
+      "IDEMPOTENCY_CONFLICT",
+      `该 idempotencyKey 的既有状态为 ${record.status}，不能直接执行 ${operation} 操作；请先调用反查接口确认状态。`,
+    );
+  }
+
+  private async persistReconciledRecord(input: {
+    request: ToutiaoDraftRequest;
+    status: "draft";
+  }): Promise<ToutiaoArticleRecord | undefined> {
+    if (!input.request.idempotencyKey) return undefined;
+    const now = new Date().toISOString();
+    const page = await this.newPage();
+    let remote: RemoteArticle | undefined;
+    try {
+      remote = await findRemoteArticleByTitle(page, input.request.title.trim());
+    } finally {
+      await page.close().catch(() => {});
+    }
+    return await this.records.upsert({
+      idempotencyKey: input.request.idempotencyKey,
+      title: input.request.title.trim(),
+      articleId: remote?.articleId,
+      status: remote?.status ?? "pending_reconciliation",
+      currentUrl: remote?.currentUrl,
+      createdAt: now,
+      updatedAt: now,
+      reconciledAt: now,
+    });
   }
 
   private async newPage(
@@ -315,6 +487,69 @@ interface PreparedArticle {
   coverUploaded: boolean;
 }
 
+/**
+ * 定时配置失败后，已落库的草稿必须在原文上继续操作，不能重新创建一篇同标题文章。
+ * 头条编辑器目前兼容 draft_id 与 group_id 两种草稿入口，逐个验证标题后再继续。
+ */
+async function openExistingDraftForEditing(
+  page: Page,
+  record: ToutiaoArticleRecord,
+): Promise<void> {
+  if (!record.articleId) {
+    throw new ToutiaoRelayError(
+      "RECONCILE_NOT_FOUND",
+      "已找到本地草稿记录，但尚未取得头条真实草稿 ID，不能安全继续定时发布。",
+    );
+  }
+  const draftId = encodeURIComponent(record.articleId);
+  const candidates = [
+    `${PUBLISH_URL}?draft_id=${draftId}`,
+    `${PUBLISH_URL}?group_id=${draftId}`,
+  ];
+  for (const url of candidates) {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
+    await waitForEditor(page).catch(() => {});
+    const title = await page.evaluate(() => {
+      const element = document.querySelector<
+        HTMLInputElement | HTMLTextAreaElement
+      >(
+        "textarea[placeholder*='标题'],input[placeholder*='标题']",
+      );
+      return element?.value?.trim() ?? "";
+    });
+    if (title === record.title) return;
+  }
+  // URL 参数可能随头条版本变化；草稿列表中的标题入口是更稳定的兜底路径。
+  await page.goto(DRAFT_LIST_URL, {
+    waitUntil: "domcontentloaded",
+    timeout: 45_000,
+  });
+  // 草稿列表为异步渲染，domcontentloaded 后仍可能是空白骨架屏。
+  await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(
+    () => {},
+  );
+  await page.waitForTimeout(2_000);
+  const draftTitle = page.getByText(record.title, { exact: true }).last();
+  if (await draftTitle.isVisible().catch(() => false)) {
+    await draftTitle.click();
+    await waitForEditor(page).catch(() => {});
+    const title = await page.evaluate(() => {
+      const element = document.querySelector<
+        HTMLInputElement | HTMLTextAreaElement
+      >(
+        "textarea[placeholder*='标题'],input[placeholder*='标题']",
+      );
+      return element?.value?.trim() ?? "";
+    });
+    if (title === record.title) return;
+  }
+  throw new ToutiaoRelayError(
+    "RECONCILE_NOT_FOUND",
+    "无法重新打开已保存的头条草稿，已停止以避免重复创建文章。",
+    { articleId: record.articleId },
+  );
+}
+
 async function prepareArticle(
   page: Page,
   request: ToutiaoDraftRequest,
@@ -330,6 +565,27 @@ async function prepareArticle(
   const coverPath = await prepareCoverImage(request);
   if (coverPath) await uploadCover(page, coverPath);
   return { title, coverUploaded: Boolean(coverPath) };
+}
+
+/**
+ * 头条编辑器会在同一浏览器资料中恢复最近一次本地草稿。
+ * 仅清理发布页的草稿恢复键，再重新加载页面；登录 Cookie、服务器草稿和其它站点数据均保留。
+ */
+async function openFreshPublishPage(page: Page): Promise<void> {
+  await page.goto(PUBLISH_URL, {
+    waitUntil: "domcontentloaded",
+    timeout: 45_000,
+  });
+  const removed = await page.evaluate(() => {
+    const removable = Object.keys(localStorage).filter((key) =>
+      /(draft|graphic|publish|editor)/i.test(key)
+    );
+    for (const key of removable) localStorage.removeItem(key);
+    return removable.length;
+  }).catch(() => 0);
+  if (removed > 0) {
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 45_000 });
+  }
 }
 
 async function waitForEditor(page: Page): Promise<void> {
@@ -599,6 +855,12 @@ async function configureSchedule(
       "没有找到今日头条定时发布按钮",
     );
   }
+  if (await scheduleButton.isDisabled().catch(() => false)) {
+    throw new ToutiaoRelayError(
+      "CONTENT_INVALID",
+      "今日头条将定时发布按钮置灰；请检查正文长度、封面和发布必填项。",
+    );
+  }
   await scheduleButton.click();
   const modal = page.locator(".common-timing-picker").last();
   if (!await modal.isVisible().catch(() => false)) {
@@ -713,12 +975,225 @@ async function prepareCoverImage(
   return path;
 }
 
+async function requireScheduleCover(
+  request: ToutiaoScheduleRequest,
+): Promise<string> {
+  const coverPath = await prepareCoverImage(request);
+  if (!coverPath) {
+    throw new ToutiaoRelayError(
+      "COVER_NOT_FOUND",
+      "今日头条正式定时发布必须提供原创封面；请先生成或上传 coverImagePath。",
+    );
+  }
+  return coverPath;
+}
+
+/**
+ * 以头条草稿列表接口为主源反查文章。页面 DOM 仅用于确认该标题确实出现，
+ * 不从 DOM 猜测文章 ID，避免因页面改版产生错误映射。
+ */
+async function findRemoteArticleByTitle(
+  page: Page,
+  title: string,
+): Promise<RemoteArticle | undefined> {
+  return await findDraftByTitle(page, title) ??
+    await findManagedContentByTitle(page, title);
+}
+
+async function findDraftByTitle(
+  page: Page,
+  title: string,
+): Promise<RemoteArticle | undefined> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const responsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes("/creator_center/draft_list") &&
+        response.request().method() === "GET",
+      { timeout: 15_000 },
+    ).catch(() => undefined);
+    await page.goto(`${DRAFT_LIST_URL}?reconcile=${Date.now()}-${attempt}`, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
+    const response = await responsePromise;
+    if (response) {
+      const payload = await response.json().catch(() => undefined);
+      const draft = findMatchingDraft(payload, title);
+      if (draft) return draft;
+    }
+    // 列表接口偶尔会先返回旧缓存，短暂等待后再发起一次请求。
+    await page.waitForTimeout(1_000);
+  }
+
+  const draftItem = page.locator(".article-draft-item").filter({
+    hasText: title,
+  });
+  if (await draftItem.count()) {
+    // DOM 兜底只证明草稿已出现；没有稳定 ID 时必须继续保持待反查状态。
+    const dataId = await draftItem.first().evaluate((element) =>
+      element.getAttribute("data-id") ?? element.getAttribute("data-draft-id")
+    );
+    if (dataId?.trim()) {
+      return {
+        articleId: dataId.trim(),
+        currentUrl: page.url(),
+        status: "draft",
+      };
+    }
+  }
+  return undefined;
+}
+
+/** 从作品管理接口反查已定时或已发布内容。 */
+async function findManagedContentByTitle(
+  page: Page,
+  title: string,
+): Promise<RemoteArticle | undefined> {
+  const responsePromise = page.waitForResponse(
+    (response) =>
+      response.url().includes("/api/feed/mp_provider/v1/") &&
+      response.request().method() === "GET",
+    { timeout: 15_000 },
+  ).catch(() => undefined);
+  await page.goto(`${CONTENT_LIST_URL}?reconcile=${Date.now()}`, {
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
+  });
+  const response = await responsePromise;
+  if (!response) return undefined;
+  return findMatchingManagedContent(
+    await response.json().catch(() => undefined),
+    title,
+  );
+}
+
+function findMatchingManagedContent(
+  value: unknown,
+  title: string,
+): RemoteArticle | undefined {
+  for (const item of findObjectsWithTitle(value, title)) {
+    const articleId = firstString(
+      item.article_id,
+      item.content_id,
+      item.item_id,
+      item.group_id,
+      item.id,
+    );
+    if (!articleId) continue;
+    const statusText = [
+      item.status,
+      item.status_desc,
+      item.publish_status,
+      item.publish_status_desc,
+      item.display_status,
+    ].map((entry) => String(entry ?? "")).join(" ");
+    const status = /定时|schedule/i.test(statusText) ||
+        hasFuturePublishTime(item.publish_time ?? item.publishTime)
+      ? "scheduled"
+      : "published";
+    return {
+      articleId,
+      status,
+      currentUrl: firstString(item.url, item.edit_url) ?? CONTENT_LIST_URL,
+    };
+  }
+  return undefined;
+}
+
+function findObjectsWithTitle(
+  value: unknown,
+  title: string,
+): Record<string, unknown>[] {
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => findObjectsWithTitle(item, title));
+  }
+  const object = value as Record<string, unknown>;
+  const matched = readString(object.title) === title ? [object] : [];
+  return [
+    ...matched,
+    ...Object.values(object).flatMap((item) =>
+      findObjectsWithTitle(item, title)
+    ),
+  ];
+}
+
+function hasFuturePublishTime(value: unknown): boolean {
+  if (typeof value === "number") {
+    const milliseconds = value < 1_000_000_000_000 ? value * 1000 : value;
+    return milliseconds > Date.now();
+  }
+  if (typeof value !== "string") return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp > Date.now();
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const stringValue = readString(value);
+    if (stringValue) return stringValue;
+  }
+  return undefined;
+}
+
+function readString(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function draftResultFromRecord(
+  record: ToutiaoArticleRecord,
+): ToutiaoDraftResult {
+  return {
+    draftId: record.articleId ?? record.idempotencyKey,
+    status: "draft",
+    title: record.title,
+    currentUrl: record.currentUrl ?? PUBLISH_URL,
+    savedAt: record.updatedAt,
+    idempotencyKey: record.idempotencyKey,
+    articleId: record.articleId,
+    reconciledAt: record.reconciledAt,
+    reason: record.status === "pending_reconciliation"
+      ? "文章已保存，正在等待头条草稿列表返回真实文章 ID；可稍后调用反查接口。"
+      : undefined,
+  };
+}
+
+function scheduledResultFromRecord(
+  record: ToutiaoArticleRecord,
+): ToutiaoScheduledResult {
+  return {
+    draftId: record.articleId ?? record.idempotencyKey,
+    status: "scheduled",
+    title: record.title,
+    currentUrl: record.currentUrl ?? PUBLISH_URL,
+    scheduledFor: record.scheduledFor,
+    idempotencyKey: record.idempotencyKey,
+    articleId: record.articleId,
+    reconciledAt: record.reconciledAt,
+  };
+}
+
 function toPlainText(value: string): string {
   return value.replaceAll(/<[^>]+>/g, " ");
 }
 
 function normalizeText(value: string): string {
-  return value.replaceAll(/\s+/g, " ").trim();
+  // 编辑器回读的是浏览器解码后的文本，而 HTML 源正文可能仍保留实体。
+  // 先统一常见实体再折叠空白，避免“Cat &amp; Jack”被误判为正文缺失。
+  const entities: Record<string, string> = {
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    "#39": "'",
+    "#x27": "'",
+  };
+  return value.replaceAll(
+    /&(amp|lt|gt|quot|#39|#x27);/gi,
+    (matched) => entities[matched.slice(1, -1).toLowerCase()] ?? matched,
+  ).replaceAll(/\s+/g, " ").trim();
 }
 
 function escapeRegExp(value: string): string {

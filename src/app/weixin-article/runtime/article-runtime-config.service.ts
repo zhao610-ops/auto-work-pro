@@ -816,6 +816,13 @@ function articleConfigToResolvedFallback(
       allowForcePublish: config.qualityGate.allowForcePublish,
       maxRevisionRounds: config.qualityGate.maxRevisionRounds,
     },
+    // 头条调度属于部署级单账号能力，不随微信公众号 Runtime Profile 覆盖。
+    toutiao: {
+      enabled: false,
+      scheduleTime: "11:00",
+      preparationLeadMinutes: 150,
+      profileId: "",
+    },
   };
 }
 

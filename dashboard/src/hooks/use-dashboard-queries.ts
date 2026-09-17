@@ -6,6 +6,8 @@ import {
   getHealth,
   getRunDetail,
   getRuns,
+  getToutiaoJobs,
+  getToutiaoOps,
   getWeixinAccountInsights,
   getWeixinAccounts,
   triggerMatrixRun,
@@ -27,6 +29,8 @@ export function dashboardQueryKeys(apiKey: string) {
     accounts: ["dashboard", apiKey, "weixin-accounts"] as const,
     accountInsights: ["dashboard", apiKey, "weixin-account-insights"] as const,
     runs: ["dashboard", apiKey, "runs"] as const,
+    toutiaoJobs: ["dashboard", apiKey, "toutiao-jobs"] as const,
+    toutiaoOps: ["dashboard", apiKey, "toutiao-ops"] as const,
     runDetail: (runId: string | null) =>
       ["dashboard", apiKey, "run-detail", runId] as const,
   };
@@ -89,6 +93,19 @@ export function useDashboardQueries(
     refetchInterval: autoRefresh ? AUTO_REFRESH_MS : false,
   });
 
+  const toutiaoJobs = useQuery({
+    queryKey: keys.toutiaoJobs,
+    queryFn: () => getToutiaoJobs(apiKey),
+    enabled,
+    refetchInterval: autoRefresh ? AUTO_REFRESH_MS : false,
+  });
+  const toutiaoOps = useQuery({
+    queryKey: keys.toutiaoOps,
+    queryFn: () => getToutiaoOps(apiKey),
+    enabled,
+    refetchInterval: autoRefresh ? AUTO_REFRESH_MS : false,
+  });
+
   const selectedRun = useQuery({
     queryKey: keys.runDetail(selectedRunId),
     queryFn: () => getRunDetail(apiKey, selectedRunId ?? ""),
@@ -104,6 +121,8 @@ export function useDashboardQueries(
     accounts,
     accountInsights,
     runs,
+    toutiaoJobs,
+    toutiaoOps,
     selectedRun,
   };
 }
@@ -121,6 +140,8 @@ export function useDashboardRefresh(apiKey: string) {
       queryClient.invalidateQueries({ queryKey: keys.accounts }),
       queryClient.invalidateQueries({ queryKey: keys.accountInsights }),
       queryClient.invalidateQueries({ queryKey: keys.runs }),
+      queryClient.invalidateQueries({ queryKey: keys.toutiaoJobs }),
+      queryClient.invalidateQueries({ queryKey: keys.toutiaoOps }),
     ]);
 }
 

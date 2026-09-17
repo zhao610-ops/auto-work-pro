@@ -35,6 +35,13 @@ Deno.serve({ port: config.port }, async (request) => {
       return ok(await session.getSessionStatus());
     }
 
+    if (request.method === "GET" && url.pathname === "/api/toutiao/articles") {
+      return ok(await session.reconcileArticle({
+        idempotencyKey: url.searchParams.get("idempotencyKey") ?? undefined,
+        title: url.searchParams.get("title") ?? undefined,
+      }));
+    }
+
     if (request.method === "POST" && url.pathname === "/api/toutiao/login") {
       return ok(await session.openLoginPage());
     }

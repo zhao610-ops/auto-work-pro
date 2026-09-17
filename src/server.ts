@@ -16,6 +16,11 @@ import type {
   WeixinArticleWorkflowInput,
 } from "@src/app/weixin-article/workflow.definition.ts";
 import { Logger } from "@zilla/logger";
+import {
+  createToutiaoScheduleStore,
+  processToutiaoSchedule,
+} from "@src/controllers/toutiao-scheduler.ts";
+import { ToutiaoRelayClient } from "@src/integrations/publish/providers/toutiao-relay-client.ts";
 
 const logger = new Logger("server");
 
@@ -212,6 +217,59 @@ async function handleAccountInsightsRequest(req: Request): Promise<Response> {
     editorialMemoryStore: stores.editorialMemoryStore,
   });
   return jsonResponse({ insights });
+}
+
+async function handleToutiaoJobsRequest(req: Request): Promise<Response> {
+  const unauthorized = await verifyRequestAuth(req);
+  if (unauthorized) return unauthorized;
+  const config = await getAppConfig();
+  const queue = createToutiaoScheduleStore(config);
+  if (req.method === "POST") {
+    await processToutiaoSchedule(config);
+  }
+  if (req.method !== "GET" && req.method !== "POST") {
+    return jsonResponse({ error: "只支持 GET 或 POST" }, 405);
+  }
+  return jsonResponse({
+    enabled: config.features.article.toutiao.enabled,
+    scheduleTime: config.features.article.toutiao.scheduleTime,
+    preparationLeadMinutes: config.features.article.toutiao.preparationLeadMinutes,
+    relayConfigured: Boolean(
+      config.providers.publish.toutiaoRelay.url &&
+        config.providers.publish.toutiaoRelay.token,
+    ),
+    jobs: await queue.list(),
+  });
+}
+
+async function handleToutiaoOpsRequest(req: Request): Promise<Response> {
+  const unauthorized = await verifyRequestAuth(req);
+  if (unauthorized) return unauthorized;
+  const config = await getAppConfig();
+  const queue = createToutiaoScheduleStore(config);
+  if (req.method === "POST") {
+    const payload = await req.json().catch(() => ({})) as { jobId?: string };
+    const jobId = payload.jobId?.trim();
+    if (!jobId) return jsonResponse({ error: "缺少 jobId" }, 400);
+    const job = await queue.get(jobId);
+    if (!job) return jsonResponse({ error: "头条任务不存在" }, 404);
+    if (job.status !== "failed" && job.status !== "blocked") {
+      return jsonResponse({ error: "只有失败或阻断任务可以重试" }, 409);
+    }
+    if (!job.title || !job.htmlArtifactKey) {
+      return jsonResponse({ error: "任务缺少可重试的预生成产物" }, 409);
+    }
+    await queue.save({ ...job, status: "ready", error: undefined, attempts: 0 });
+  } else if (req.method !== "GET") {
+    return jsonResponse({ error: "只支持 GET 或 POST" }, 405);
+  }
+  const relay = new ToutiaoRelayClient(config.providers.publish.toutiaoRelay);
+  return jsonResponse({
+    enabled: config.features.article.toutiao.enabled,
+    relayConfigured: Boolean(config.providers.publish.toutiaoRelay.url && config.providers.publish.toutiaoRelay.token),
+    relayHealth: await relay.health(),
+    jobs: await queue.list(),
+  });
 }
 
 async function handleRunsRequest(req: Request, pathname: string) {
@@ -518,6 +576,12 @@ const handler = async (req: Request): Promise<Response> => {
     }
     if (req.method === "GET" && url.pathname === "/api/accounts/insights") {
       return await handleAccountInsightsRequest(req);
+    }
+    if (url.pathname === "/api/toutiao/jobs") {
+      return await handleToutiaoJobsRequest(req);
+    }
+    if (url.pathname === "/api/toutiao/ops") {
+      return await handleToutiaoOpsRequest(req);
     }
     if (
       url.pathname === "/api/config/providers" ||

@@ -31,6 +31,9 @@ import { ArtifactPreview, ArtifactsPanel } from "./pages/artifacts.tsx";
 import { ArticleQualityWorkspace } from "./pages/quality.tsx";
 import { RuntimeConfigPanel } from "./pages/runtime-config.tsx";
 import { RunsWorkspace } from "./pages/runs.tsx";
+import { ToutiaoWorkspace } from "./pages/toutiao.tsx";
+import { triggerToutiaoSchedule } from "./api/client.ts";
+import { retryToutiaoJob } from "./api/client.ts";
 import "./styles.css";
 
 const queryClient = new QueryClient({
@@ -106,6 +109,8 @@ function App() {
   const accountInsights = dashboard.accountInsights.data?.insights ?? [];
   const runs = dashboard.runs.data?.runs ?? [];
   const selectedRun = dashboard.selectedRun.data?.run ?? null;
+  const toutiaoJobs = dashboard.toutiaoJobs.data ?? null;
+  const toutiaoOps = dashboard.toutiaoOps.data ?? null;
   const latestRun = runs[0];
   const currentView = VIEW_META[activeView];
   const showRuntimeConfig = articleProfiles.length > 0;
@@ -117,6 +122,8 @@ function App() {
     dashboard.accountInsights.isFetching ||
     dashboard.runs.isFetching ||
     dashboard.selectedRun.isFetching ||
+    dashboard.toutiaoJobs.isFetching ||
+    dashboard.toutiaoOps.isFetching ||
     triggerRunMutation.isPending ||
     triggerMatrixRunMutation.isPending;
 
@@ -129,6 +136,8 @@ function App() {
     dashboard.accountInsights.error,
     dashboard.runs.error,
     dashboard.selectedRun.error,
+    dashboard.toutiaoJobs.error,
+    dashboard.toutiaoOps.error,
   ].find(Boolean);
   const visibleError = error ||
     (queryError instanceof Error ? queryError.message : "");
@@ -420,6 +429,22 @@ function App() {
               apiKey={apiKey}
               profileId={selectedConfigProfileId}
               onPreviewArtifact={setPreviewArtifact}
+            />
+          )}
+
+          {activeView === "toutiao" && (
+            <ToutiaoWorkspace
+              data={toutiaoJobs}
+              ops={toutiaoOps}
+              checking={dashboard.toutiaoJobs.isFetching}
+              onCheck={async () => {
+                await triggerToutiaoSchedule(apiKey);
+                await refresh();
+              }}
+              onRetry={async (jobId) => {
+                await retryToutiaoJob(apiKey, jobId);
+                await refresh();
+              }}
             />
           )}
 

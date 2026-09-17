@@ -5,6 +5,7 @@ export type DashboardView =
   | "sources"
   | "quality"
   | "runs"
+  | "toutiao"
   | "artifacts"
   | "settings";
 
@@ -36,6 +37,10 @@ export const VIEW_META: Record<
   runs: {
     title: "运行",
     description: "查看每次运行的状态、步骤、耗时和错误。",
+  },
+  toutiao: {
+    title: "头条定时发布",
+    description: "管理每日 11 点原生定时任务、文章 ID 与异常快照。",
   },
   artifacts: {
     title: "产物库",

@@ -134,6 +134,11 @@ export default defineConfig({
         url: "",
         token: "",
       },
+      /** 今日头条单账号浏览器 Relay。未启用时可以留空。 */
+      toutiaoRelay: {
+        url: "http://127.0.0.1:8091",
+        token: "",
+      },
     },
 
     /**
@@ -209,6 +214,15 @@ export default defineConfig({
    */
   features: {
     article: {
+      /**
+       * 今日头条自动定时发布。启用后会在目标时间前 150 分钟预生成内容，
+       * 再提交给头条原生定时发布；不会创建微信公众号草稿。
+       */
+      toutiao: {
+        enabled: false,
+        scheduleTime: "11:00",
+        preparationLeadMinutes: 150,
+      },
       /**
        * 文章数据源列表。
        *

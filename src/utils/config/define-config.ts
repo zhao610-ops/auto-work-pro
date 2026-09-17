@@ -185,6 +185,24 @@ export interface PublishProvidersConfig {
     /** Relay Bearer Token，应与 relay 服务的 server.apiKey 一致。 */
     token?: string;
   };
+  /** 今日头条浏览器 Relay；单账号登录态仅保存在 Relay 所在机器。 */
+  toutiaoRelay?: {
+    /** Relay 地址，例如 http://127.0.0.1:8091。 */
+    url?: string;
+    /** Relay Bearer Token。 */
+    token?: string;
+  };
+}
+
+/** 今日头条自动定时发布。内容仍复用文章工作流预生成，不会创建微信草稿。 */
+export interface ToutiaoAutomationConfig {
+  enabled?: boolean;
+  /** 每日目标发布时间（北京时间），默认 11:00。 */
+  scheduleTime?: string;
+  /** 在目标时间前提前多少分钟生成并提交到头条，默认 150，满足头条至少提前 2 小时。 */
+  preparationLeadMinutes?: number;
+  /** 复用哪个文章 Runtime Profile；留空使用默认 Profile。 */
+  profileId?: string;
 }
 
 /** 通知供应商凭证。是否启用通知渠道由 features.article.notifications 决定。 */
@@ -385,6 +403,8 @@ export interface ArticleFeatureConfig {
   sourceLimits?: ArticleSourceLimitsConfig;
   /** 发布前质量门禁。只保护真实发布，dry-run 永远继续产出。 */
   qualityGate?: ArticleQualityGateConfig;
+  /** 今日头条单账号自动定时发布配置。 */
+  toutiao?: ToutiaoAutomationConfig;
 }
 
 /** 功能配置。 */
@@ -584,6 +604,10 @@ export interface ResolvedTrendPublishConfig {
         url: string;
         token: string;
       };
+      toutiaoRelay: {
+        url: string;
+        token: string;
+      };
     };
     notify: {
       bark: {
@@ -647,6 +671,12 @@ export interface ResolvedTrendPublishConfig {
         forcePublish: boolean;
         allowForcePublish: boolean;
         maxRevisionRounds: number;
+      };
+      toutiao: {
+        enabled: boolean;
+        scheduleTime: string;
+        preparationLeadMinutes: number;
+        profileId: string;
       };
     };
   };
@@ -876,6 +906,10 @@ export function resolveTrendPublishConfig(
           url: config.providers?.publish?.weixinRelay?.url ?? "",
           token: config.providers?.publish?.weixinRelay?.token ?? "",
         },
+        toutiaoRelay: {
+          url: config.providers?.publish?.toutiaoRelay?.url ?? "",
+          token: config.providers?.publish?.toutiaoRelay?.token ?? "",
+        },
       },
       notify: {
         bark: {
@@ -963,6 +997,14 @@ export function resolveTrendPublishConfig(
           forcePublish: article.qualityGate?.forcePublish ?? false,
           allowForcePublish: article.qualityGate?.allowForcePublish ?? true,
           maxRevisionRounds: article.qualityGate?.maxRevisionRounds ?? 3,
+        },
+        toutiao: {
+          enabled: article.toutiao?.enabled ?? false,
+          scheduleTime: normalizeDailyTime(article.toutiao?.scheduleTime ?? "11:00"),
+          preparationLeadMinutes: normalizeToutiaoLeadMinutes(
+            article.toutiao?.preparationLeadMinutes,
+          ),
+          profileId: article.toutiao?.profileId?.trim() ?? "",
         },
       },
     },
@@ -1057,6 +1099,21 @@ function normalizePositiveInteger(value: number | undefined, fallback: number) {
     return fallback;
   }
   return Math.max(1, Math.floor(value));
+}
+
+function normalizeDailyTime(value: string): string {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return "11:00";
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return "11:00";
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function normalizeToutiaoLeadMinutes(value: number | undefined): number {
+  if (!Number.isFinite(value) || value === undefined) return 150;
+  // 头条原生定时发布要求至少提前两小时；额外 10 分钟给心跳调度留余量。
+  return Math.max(130, Math.min(7 * 24 * 60, Math.floor(value)));
 }
 
 function isCompatibleArticleImageModel(

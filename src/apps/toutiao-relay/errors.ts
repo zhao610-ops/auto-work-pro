@@ -12,6 +12,9 @@ export const TOUTIAO_RELAY_ERROR_CODES = [
   "SCHEDULE_WINDOW_INVALID",
   "SCHEDULE_CONTROL_NOT_FOUND",
   "SCHEDULE_CONFIRM_FAILED",
+  "RECONCILE_NOT_FOUND",
+  "RECONCILE_FAILED",
+  "IDEMPOTENCY_CONFLICT",
   "BROWSER_LAUNCH_FAILED",
   "UNKNOWN",
 ] as const;
@@ -45,5 +48,7 @@ export function errorHttpStatus(code: ToutiaoRelayErrorCode): number {
   if (code === "SCHEDULE_TIME_INVALID" || code === "SCHEDULE_WINDOW_INVALID") {
     return 400;
   }
+  if (code === "RECONCILE_NOT_FOUND") return 404;
+  if (code === "IDEMPOTENCY_CONFLICT") return 409;
   return 500;
 }

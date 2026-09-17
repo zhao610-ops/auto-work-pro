@@ -8,6 +8,7 @@ import {
   Settings,
   ShieldCheck,
   Workflow,
+  Send,
 } from "lucide-react";
 import type { DashboardView } from "../../dashboard/views.ts";
 
@@ -88,6 +89,12 @@ function navItems(config: NavConfig, latestRun: NavRun) {
       label: "运行",
       meta: latestRun?.status ?? "idle",
       icon: <Database className="size-4" />,
+    },
+    {
+      view: "toutiao" as const,
+      label: "头条定时",
+      meta: "草稿 / 定时 / 发布",
+      icon: <Send className="size-4" />,
     },
     {
       view: "artifacts" as const,

@@ -8,6 +8,8 @@ export function loadToutiaoRelayConfig(): ToutiaoRelayConfig {
     "./data/toutiao/browser-data";
   const screenshotsDir = Deno.env.get("TOUTIAO_SCREENSHOTS_DIR") ??
     "./data/toutiao/screenshots";
+  const statePath = Deno.env.get("TOUTIAO_STATE_PATH") ??
+    "./data/toutiao/article-records.json";
   const token = Deno.env.get("TOUTIAO_RELAY_TOKEN") ??
     Deno.env.get("TRENDPUBLISH_API_KEY") ??
     "";
@@ -17,6 +19,7 @@ export function loadToutiaoRelayConfig(): ToutiaoRelayConfig {
     token,
     profileDir,
     screenshotsDir,
+    statePath,
     defaultScheduleTime:
       Deno.env.get("TOUTIAO_DEFAULT_SCHEDULE_TIME")?.trim() ||
       "11:00",

@@ -13,6 +13,8 @@ import type {
   WeixinAccountInsight,
   WeixinAccountProfile,
   WeixinAccountRelayCheck,
+  ToutiaoJobsResponse,
+  ToutiaoOpsResponse,
 } from "./types.ts";
 
 export async function parseApiError(response: Response) {
@@ -107,6 +109,27 @@ export function checkWeixinAccountRelay(apiKey: string, accountId: string) {
 
 export function getRuns(apiKey: string) {
   return apiJson<{ runs: ArticleRunRecord[] }>("/api/runs", apiKey);
+}
+
+export function getToutiaoJobs(apiKey: string) {
+  return apiJson<ToutiaoJobsResponse>("/api/toutiao/jobs", apiKey);
+}
+
+export function triggerToutiaoSchedule(apiKey: string) {
+  return apiJson<ToutiaoJobsResponse>("/api/toutiao/jobs", apiKey, {
+    method: "POST",
+  });
+}
+
+export function getToutiaoOps(apiKey: string) {
+  return apiJson<ToutiaoOpsResponse>("/api/toutiao/ops", apiKey);
+}
+
+export function retryToutiaoJob(apiKey: string, jobId: string) {
+  return apiJson<ToutiaoOpsResponse>("/api/toutiao/ops", apiKey, {
+    method: "POST",
+    body: JSON.stringify({ jobId }),
+  });
 }
 
 export function getRunDetail(apiKey: string, runId: string) {

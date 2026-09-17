@@ -17,6 +17,7 @@ import {
 import type { PublishResult } from "@src/core/ports/content-publisher.ts";
 import { LocalScheduledMassSendStore } from "@src/platform/local/local-scheduled-mass-send-store.ts";
 import { join } from "node:path";
+import { processToutiaoSchedule } from "@src/controllers/toutiao-scheduler.ts";
 const logger = new Logger("cron");
 const PREPARE_LEAD_MS = 10 * 60 * 1000;
 export enum WorkflowType {
@@ -50,6 +51,7 @@ export const startCronJobs = async () => {
         const now = new Date();
         await prepareUpcomingMassSends(config, runtimeStores, now);
         await dispatchDueMassSends(config, runtimeStores, now);
+        await processToutiaoSchedule(config, now);
       } catch (error) {
         logger.error(`工作流执行失败:`, error);
         notifier.notify("工作流执行失败", String(error));

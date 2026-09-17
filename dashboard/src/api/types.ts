@@ -63,6 +63,35 @@ export interface HealthResponse {
   checks: Record<string, { ok: boolean; detail: string }>;
 }
 
+export interface ToutiaoScheduleJob {
+  id: string;
+  targetAt: string;
+  sourceRunId?: string;
+  title?: string;
+  htmlArtifactKey?: string;
+  status: "preparing" | "ready" | "scheduled" | "published" | "blocked" | "failed";
+  articleId?: string;
+  screenshotPath?: string;
+  error?: string;
+  attempts: number;
+  updatedAt: string;
+}
+
+export interface ToutiaoJobsResponse {
+  enabled: boolean;
+  scheduleTime: string;
+  preparationLeadMinutes: number;
+  relayConfigured: boolean;
+  jobs: ToutiaoScheduleJob[];
+}
+
+export interface ToutiaoOpsResponse {
+  enabled: boolean;
+  relayConfigured: boolean;
+  relayHealth: { ok: boolean; service?: string; mode?: string };
+  jobs: ToutiaoScheduleJob[];
+}
+
 export interface ConfigSummary {
   mode: string;
   article: {
