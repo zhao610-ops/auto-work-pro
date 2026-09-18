@@ -269,6 +269,14 @@ export class D1RuntimeConfigStore implements RuntimeConfigStore {
     return row ? rowToRuntimeSchedule(row) : null;
   }
 
+  async listSchedules(): Promise<RuntimeSchedule[]> {
+    await this.ensureSchema();
+    const result = await this.d1.prepare(
+      "SELECT * FROM runtime_schedules ORDER BY created_at ASC",
+    ).all<RuntimeScheduleRow>();
+    return result.results.map(rowToRuntimeSchedule);
+  }
+
   async saveSchedule(input: RuntimeScheduleInput): Promise<RuntimeSchedule> {
     await this.ensureSchema();
     await this.requireFeatureProfile(input.profileId);
@@ -305,11 +313,7 @@ export class D1RuntimeConfigStore implements RuntimeConfigStore {
   }
 
   async listDueSchedules(now: Date): Promise<RuntimeScheduleTick[]> {
-    await this.ensureSchema();
-    const result = await this.d1.prepare(
-      "SELECT * FROM runtime_schedules WHERE enabled = 1",
-    ).all<RuntimeScheduleRow>();
-    return result.results.map(rowToRuntimeSchedule)
+    return (await this.listSchedules())
       .filter((schedule) => isCronDue(schedule.cron, now, schedule.timezone))
       .map((schedule) => ({
         schedule,

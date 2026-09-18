@@ -257,6 +257,12 @@ export class SQLiteRuntimeConfigStore implements RuntimeConfigStore {
     return row ? rowToRuntimeSchedule(row) : null;
   }
 
+  async listSchedules(): Promise<RuntimeSchedule[]> {
+    return this.getDb().prepare(
+      "SELECT * FROM runtime_schedules ORDER BY created_at ASC",
+    ).all().map((row) => rowToRuntimeSchedule(row as RuntimeScheduleRow));
+  }
+
   async saveSchedule(input: RuntimeScheduleInput): Promise<RuntimeSchedule> {
     this.requireFeatureProfile(input.profileId);
     const existing = input.id
@@ -292,10 +298,7 @@ export class SQLiteRuntimeConfigStore implements RuntimeConfigStore {
   }
 
   async listDueSchedules(now: Date): Promise<RuntimeScheduleTick[]> {
-    const rows = this.getDb().prepare(
-      "SELECT * FROM runtime_schedules WHERE enabled = 1",
-    ).all() as RuntimeScheduleRow[];
-    return rows.map(rowToRuntimeSchedule)
+    return (await this.listSchedules())
       .filter((schedule) => isCronDue(schedule.cron, now, schedule.timezone))
       .map((schedule) => ({
         schedule,

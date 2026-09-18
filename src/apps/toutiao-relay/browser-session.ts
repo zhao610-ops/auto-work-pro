@@ -6,22 +6,18 @@ import {
 } from "npm:playwright-core@1.56.1";
 import { ToutiaoRelayError } from "./errors.ts";
 import {
-  assertScheduleContentLength,
-  assertScheduleCoverProvided,
+  assertPublishContentLength,
+  assertPublishCoverProvided,
 } from "./publication-preflight.ts";
 import { ToutiaoArticleRecordStore } from "./article-record-store.ts";
 import { findMatchingDraft, type RemoteArticle } from "./reconciliation.ts";
-import {
-  resolveToutiaoScheduleTarget,
-  type ToutiaoScheduleTarget,
-} from "./schedule.ts";
 import type {
   ToutiaoArticleRecord,
   ToutiaoDraftRequest,
   ToutiaoDraftResult,
+  ToutiaoPublishRequest,
+  ToutiaoPublishResult,
   ToutiaoRelayConfig,
-  ToutiaoScheduledResult,
-  ToutiaoScheduleRequest,
   ToutiaoSessionStatus,
 } from "./types.ts";
 
@@ -137,18 +133,19 @@ export class ToutiaoBrowserSession {
     }
   }
 
-  async schedulePublication(
-    request: ToutiaoScheduleRequest,
-  ): Promise<ToutiaoScheduledResult> {
+  /** 系统到点后调用：浏览器仅执行头条的立即正式发布，不配置平台原生定时。 */
+  async publishNow(
+    request: ToutiaoPublishRequest,
+  ): Promise<ToutiaoPublishResult> {
     validateDraftRequest(request);
-    // 头条的定时发布要求“原创封面”。必须在写入编辑器前校验，
+    // 正式发布要求“原创封面”。必须在写入编辑器前校验，
     // 否则会留下无法提交且难以恢复的半成品草稿。
-    assertScheduleCoverProvided(request);
-    assertScheduleContentLength(request);
-    const coverPath = await requireScheduleCover(request);
-    const existing = await this.findExistingRecord(request, "scheduled");
-    if (existing?.status === "scheduled") {
-      return scheduledResultFromRecord(existing);
+    assertPublishCoverProvided(request);
+    assertPublishContentLength(request);
+    const coverPath = await requirePublishCover(request);
+    const existing = await this.findExistingRecord(request, "publish");
+    if (existing?.status === "published") {
+      return publishResultFromRecord(existing);
     }
     const page = await this.newPage();
     try {
@@ -204,40 +201,38 @@ export class ToutiaoBrowserSession {
         }
       }
 
-      const target = resolveToutiaoScheduleTarget(
-        new Date(),
-        this.config.defaultScheduleTime,
-        request.scheduledAt,
-      );
-      await configureSchedule(page, target);
-      const scheduledRecord = record && request.idempotencyKey
+      await publishImmediately(page);
+      // 页面确认发布后立即反查，取得作品 ID。列表短暂延迟时仍以成功确认作为终态，
+      // 后续调度心跳会再次反查并补齐 articleId。
+      const remote = await findManagedContentByTitle(page, article.title);
+      const publishedRecord = record && request.idempotencyKey
         ? await this.records.upsert({
           ...record,
-          status: "scheduled",
-          scheduledFor: target.at.toISOString(),
+          articleId: remote?.articleId ?? record.articleId,
+          status: "published",
+          currentUrl: remote?.currentUrl ?? page.url(),
           updatedAt: new Date().toISOString(),
           reconciledAt: new Date().toISOString(),
         })
         : record;
-      const screenshotPath = await this.captureScreenshot(page, "scheduled");
+      const screenshotPath = await this.captureScreenshot(page, "published");
       return {
-        draftId: scheduledRecord?.articleId ?? request.idempotencyKey ??
+        draftId: publishedRecord?.articleId ?? request.idempotencyKey ??
           crypto.randomUUID(),
-        status: "scheduled",
+        status: "published",
         title: article.title,
         currentUrl: page.url(),
-        scheduledFor: target.at.toISOString(),
         idempotencyKey: request.idempotencyKey,
         screenshotPath,
         contentVerified: true,
         coverUploaded: article.coverUploaded,
-        articleId: scheduledRecord?.articleId,
-        reconciledAt: scheduledRecord?.reconciledAt,
+        articleId: publishedRecord?.articleId,
+        reconciledAt: publishedRecord?.reconciledAt,
       };
     } catch (error) {
       const screenshotPath = await this.captureScreenshot(
         page,
-        "schedule-error",
+        "publish-error",
       )
         .catch(() => undefined);
       const relayError = error instanceof ToutiaoRelayError
@@ -317,7 +312,7 @@ export class ToutiaoBrowserSession {
 
   private async findExistingRecord(
     request: ToutiaoDraftRequest,
-    operation: "draft" | "scheduled",
+    operation: "draft" | "publish",
   ): Promise<ToutiaoArticleRecord | undefined> {
     if (!request.idempotencyKey) return undefined;
     const record = await this.records.get(request.idempotencyKey);
@@ -335,10 +330,10 @@ export class ToutiaoBrowserSession {
     ) {
       return record;
     }
-    if (
-      operation === "scheduled" &&
-      (record.status === "scheduled" || record.status === "draft")
-    ) {
+    if (operation === "publish" && record.status === "published") {
+      return record;
+    }
+    if (operation === "publish" && record.status === "draft") {
       return record;
     }
     throw new ToutiaoRelayError(
@@ -498,7 +493,7 @@ async function openExistingDraftForEditing(
   if (!record.articleId) {
     throw new ToutiaoRelayError(
       "RECONCILE_NOT_FOUND",
-      "已找到本地草稿记录，但尚未取得头条真实草稿 ID，不能安全继续定时发布。",
+      "已找到本地草稿记录，但尚未取得头条真实草稿 ID，不能安全继续正式发布。",
     );
   }
   const draftId = encodeURIComponent(record.articleId);
@@ -727,13 +722,20 @@ async function verifyContentReadback(
     )[0]
       ?.innerText ?? "";
   });
-  if (!normalizeText(actualText).includes(normalizeText(expectedText))) {
+  const expectedNormalized = normalizeText(expectedText);
+  const actualNormalized = normalizeText(actualText);
+  // 头条会按段落、超链接和视觉换行拆分文本节点，逐字连续包含会把完整正文
+  // 误判为缺失。用开头锚点与 90% 有效长度共同校验，仍可拦截半截写入。
+  const anchor = expectedNormalized.slice(0, Math.min(80, expectedNormalized.length));
+  const contentLooksComplete = actualNormalized.includes(anchor) &&
+    actualNormalized.length >= expectedNormalized.length * 0.9;
+  if (!contentLooksComplete) {
     throw new ToutiaoRelayError(
       "CONTENT_READBACK_FAILED",
       "正文写入后回读不完整",
       {
         expectedPreview: expectedText.slice(0, 120),
-        actualPreview: normalizeText(actualText).slice(0, 120),
+        actualPreview: actualNormalized.slice(0, 120),
       },
     );
   }
@@ -841,95 +843,58 @@ async function saveDraft(page: Page): Promise<void> {
     });
 }
 
-async function configureSchedule(
-  page: Page,
-  target: ToutiaoScheduleTarget,
-): Promise<void> {
-  const scheduleButton = page.getByRole("button", {
-    name: "定时发布",
+/** 只走头条立即发布：先打开预览，再确认最终“发布”，不触碰原生定时控件。 */
+async function publishImmediately(page: Page): Promise<void> {
+  const previewButton = page.getByRole("button", {
+    name: "预览并发布",
     exact: true,
   });
-  if (!await scheduleButton.isVisible().catch(() => false)) {
+  if (!await previewButton.isVisible().catch(() => false)) {
     throw new ToutiaoRelayError(
-      "SCHEDULE_CONTROL_NOT_FOUND",
-      "没有找到今日头条定时发布按钮",
+      "PUBLISH_CONTROL_NOT_FOUND",
+      "没有找到今日头条“预览并发布”按钮",
     );
   }
-  if (await scheduleButton.isDisabled().catch(() => false)) {
+  if (await previewButton.isDisabled().catch(() => false)) {
     throw new ToutiaoRelayError(
       "CONTENT_INVALID",
-      "今日头条将定时发布按钮置灰；请检查正文长度、封面和发布必填项。",
+      "今日头条将“预览并发布”按钮置灰；请检查正文长度、封面和发布必填项。",
     );
   }
-  await scheduleButton.click();
-  const modal = page.locator(".common-timing-picker").last();
-  if (!await modal.isVisible().catch(() => false)) {
-    throw new ToutiaoRelayError(
-      "SCHEDULE_CONTROL_NOT_FOUND",
-      "点击定时发布后没有打开时间选择窗口",
-    );
-  }
+  await previewButton.click();
 
-  await selectTimingValue(page, modal.locator(".day-select"), target.dateLabel);
-  await selectTimingValue(page, modal.locator(".hour-select"), target.hour);
-  await selectTimingValue(
-    page,
-    modal.locator(".minute-select"),
-    String(Number(target.minute)),
-  );
-
-  const publishTime = modal.locator(".publish-time");
-  await publishTime.waitFor({ state: "visible", timeout: 5_000 });
-  const actual = (await publishTime.innerText()).trim();
-  if (actual !== target.display) {
-    throw new ToutiaoRelayError(
-      "SCHEDULE_CONFIRM_FAILED",
-      "头条时间选择器回读与目标时间不一致",
-      { expected: target.display, actual },
-    );
-  }
-
-  await modal.getByRole("button", {
-    name: "预览并定时发布",
-    exact: true,
-  }).click();
-  await modal.waitFor({ state: "hidden", timeout: 15_000 }).catch(() => {
-    throw new ToutiaoRelayError(
-      "SCHEDULE_CONFIRM_FAILED",
-      "确认定时发布后窗口没有关闭",
-    );
-  });
-}
-
-async function selectTimingValue(
-  page: Page,
-  select: ReturnType<Page["locator"]>,
-  value: string,
-): Promise<void> {
-  if (!await select.isVisible().catch(() => false)) {
-    throw new ToutiaoRelayError(
-      "SCHEDULE_CONTROL_NOT_FOUND",
-      `没有找到定时发布的 ${value} 选择器`,
-    );
-  }
-  await select.click();
-  const option = page.locator(".byte-select-option").filter({
-    hasText: new RegExp(`^${escapeRegExp(value)}$`),
+  const confirmButton = page.getByRole("button", {
+    name: /^(发布|确认发布|立即发布)$/,
   }).last();
-  if (!await option.isVisible().catch(() => false)) {
+  await confirmButton.waitFor({ state: "visible", timeout: 20_000 }).catch(
+    () => {},
+  );
+  if (!await confirmButton.isVisible().catch(() => false)) {
     throw new ToutiaoRelayError(
-      "SCHEDULE_CONTROL_NOT_FOUND",
-      `定时发布选择器没有 ${value} 选项`,
+      "PUBLISH_CONFIRM_FAILED",
+      "打开发布预览 20 秒后仍没有找到最终发布确认按钮",
     );
   }
-  await option.click();
-  const actual = (await select.locator(".byte-select-view-value").innerText())
-    .trim();
-  if (actual !== value) {
+  if (await confirmButton.isDisabled().catch(() => false)) {
     throw new ToutiaoRelayError(
-      "SCHEDULE_CONFIRM_FAILED",
-      "定时发布选择器回读不一致",
-      { expected: value, actual },
+      "CONTENT_INVALID",
+      "今日头条将最终发布确认按钮置灰；请检查发布必填项。",
+    );
+  }
+  await confirmButton.click();
+  const success = await Promise.any([
+    page.getByText(/发布成功|作品发布成功|已发布成功/).first().waitFor({
+      state: "visible",
+      timeout: 20_000,
+    }).then(() => true),
+    page.waitForURL(/\/manage\/content|\/profile_v4\/manage/, {
+      timeout: 20_000,
+    }).then(() => true),
+  ]).catch(() => false);
+  if (!success) {
+    throw new ToutiaoRelayError(
+      "PUBLISH_CONFIRM_FAILED",
+      "点击最终发布后未检测到成功提示或作品管理页，已停止并保留截图供核查。",
     );
   }
 }
@@ -975,14 +940,14 @@ async function prepareCoverImage(
   return path;
 }
 
-async function requireScheduleCover(
-  request: ToutiaoScheduleRequest,
+async function requirePublishCover(
+  request: ToutiaoPublishRequest,
 ): Promise<string> {
   const coverPath = await prepareCoverImage(request);
   if (!coverPath) {
     throw new ToutiaoRelayError(
       "COVER_NOT_FOUND",
-      "今日头条正式定时发布必须提供原创封面；请先生成或上传 coverImagePath。",
+      "今日头条正式发布必须提供原创封面；请先生成或上传 coverImagePath。",
     );
   }
   return coverPath;
@@ -996,8 +961,10 @@ async function findRemoteArticleByTitle(
   page: Page,
   title: string,
 ): Promise<RemoteArticle | undefined> {
-  return await findDraftByTitle(page, title) ??
-    await findManagedContentByTitle(page, title);
+  // 已提交的作品在“作品管理”和“草稿箱”可能短暂同时出现。优先作品管理，
+  // 防止同标题草稿掩盖已进入审核或已发布的真实终态。
+  return await findManagedContentByTitle(page, title) ??
+    await findDraftByTitle(page, title);
 }
 
 async function findDraftByTitle(
@@ -1160,15 +1127,14 @@ function draftResultFromRecord(
   };
 }
 
-function scheduledResultFromRecord(
+function publishResultFromRecord(
   record: ToutiaoArticleRecord,
-): ToutiaoScheduledResult {
+): ToutiaoPublishResult {
   return {
     draftId: record.articleId ?? record.idempotencyKey,
-    status: "scheduled",
+    status: "published",
     title: record.title,
     currentUrl: record.currentUrl ?? PUBLISH_URL,
-    scheduledFor: record.scheduledFor,
     idempotencyKey: record.idempotencyKey,
     articleId: record.articleId,
     reconciledAt: record.reconciledAt,
@@ -1193,11 +1159,12 @@ function normalizeText(value: string): string {
   return value.replaceAll(
     /&(amp|lt|gt|quot|#39|#x27);/gi,
     (matched) => entities[matched.slice(1, -1).toLowerCase()] ?? matched,
-  ).replaceAll(/\s+/g, " ").trim();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  )
+    // 编辑器会在窄列视觉换行处把英文单词拆成两个文本节点，例如
+    // “Scin tilla”；这不代表正文丢失，回读校验应还原这类断词。
+    .replaceAll(/([A-Za-z])\s+([A-Za-z])/g, "$1$2")
+    .replaceAll(/\s+/g, " ")
+    .trim();
 }
 
 function imageSuffixFromContentType(contentType: string): string {

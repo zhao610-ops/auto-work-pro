@@ -29,12 +29,14 @@ ${newsroomStyle}
 1. 只基于候选主题、文章、历史记忆和人工反馈做判断。
 2. 不新增事实，不编造数据、结论、来源或链接。
 3. 反馈为“差”的原因要被转化为本次写作的规避指令。
-4. 不要为了追热点强行选低证据主题。
+4. 不要为了追热点强行选低证据主题；热度只回答“今天是否值得关注”，不能替代业务价值和事实证据。
 5. 选择主线时优先考虑“读者为什么会继续看”，不要只因为关键词热门而选择。
 6. 主线必须直接服务账号目标读者的一项工作决策。纯科技产品、AI 模型、Agent 或开发者工具，若没有消费者、市场、品牌、渠道、行业经营或宏观经济证据，禁止选为主线。
 7. 面向市场、品牌、产品企划和用户研究岗位时，优先选择包含行为变化、市场数据、品类竞争、价格渠道或宏观指标的主题。
 8. 职业成长主题必须与上述岗位能力直接相关，泛职场内容不得作为主线。
-9. 输出必须是 JSON，不要 Markdown、代码围栏或 <think>。
+9. lead 必须是 eligibleForLead=true 的主题；若没有合格主题，明确选择 watch，不得拼凑低质量主线。
+10. 正文必须优先产出“结论、证据、抓手”，而不是泛泛叙事或心灵鸡汤。
+11. 输出必须是 JSON，不要 Markdown、代码围栏或 <think>。
 
 JSON 结构必须是：
 {
@@ -74,7 +76,7 @@ export function getEditorialDecisionUserPrompt(
 决策要求：
 - 选择 1 个 lead topic；其他主题只能作为 supporting / watch，或跳过。
 - lead topic 必须能形成新闻钩子：新鲜事实、明确影响对象、反差或后续变量至少满足一个。
-- lead topic 必须明确写出它服务哪个目标岗位、支持哪项业务判断；不能用纯技术新鲜度代替账号相关性。
+- lead topic 必须明确写出它服务哪个目标岗位、支持哪项业务判断；不能用纯技术新鲜度代替账号相关性；只从 eligibleForLead=true 的主题中选择。
 - skippedTopics 必须解释为什么不写，常见原因包括重复、证据不足、风险高、读者价值弱、同质化高。
 - duplicationRisk 必须参考近期文章和人工反馈。
 - sourceJudgements 只评价本次候选文章 URL，不评价无关来源。
@@ -113,6 +115,10 @@ function compactTopics(topics: EditorialTopicReport) {
           saturation: score.saturation,
           risk: score.risk,
           evidence: score.evidence,
+          heat: score.heat,
+          businessValue: score.businessValue,
+          eligibleForLead: score.eligibleForLead,
+          eligibilityReason: score.eligibilityReason,
         }
         : undefined,
     };

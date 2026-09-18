@@ -7,7 +7,6 @@ export interface ToutiaoRelayConfig {
   chromeChannel?: string;
   screenshotsDir: string;
   statePath: string;
-  defaultScheduleTime: string;
 }
 
 export interface ToutiaoSessionStatus {
@@ -27,10 +26,8 @@ export interface ToutiaoDraftRequest {
   idempotencyKey?: string;
 }
 
-export interface ToutiaoScheduleRequest extends ToutiaoDraftRequest {
-  /** ISO 8601 时间；省略时使用 TOUTIAO_DEFAULT_SCHEDULE_TIME 的下一次北京时间。 */
-  scheduledAt?: string;
-}
+/** 系统调度到点后调用的正式发布请求；不使用头条页面的原生定时功能。 */
+export type ToutiaoPublishRequest = ToutiaoDraftRequest;
 
 export interface ToutiaoDraftResult {
   draftId: string;
@@ -49,19 +46,18 @@ export interface ToutiaoDraftResult {
   reconciledAt?: string;
 }
 
-export interface ToutiaoScheduledResult {
+export interface ToutiaoPublishResult {
   draftId: string;
-  status: "scheduled" | "blocked";
+  status: "published" | "blocked";
   title: string;
   currentUrl: string;
-  scheduledFor?: string;
   idempotencyKey?: string;
   screenshotPath?: string;
   reason?: string;
   errorCode?: "AUTH_EXPIRED";
   contentVerified?: boolean;
   coverUploaded?: boolean;
-  /** 定时前由头条草稿列表反查得到的真实 ID。 */
+  /** 发布后由头条作品列表反查得到的真实 ID。 */
   articleId?: string;
   reconciledAt?: string;
 }

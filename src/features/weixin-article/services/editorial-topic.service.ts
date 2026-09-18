@@ -18,6 +18,7 @@ import {
 import type { PromptProfileName } from "@src/prompts/prompt-profile.ts";
 import { createStructuredJsonCompletion } from "@src/utils/llm-structured-output.ts";
 import { Logger } from "@zilla/logger";
+import { TopicHeatService } from "@src/features/weixin-article/services/topic-heat.service.ts";
 
 const logger = new Logger("weixin-editorial-topic-service");
 
@@ -32,6 +33,7 @@ export class WeixinArticleEditorialTopicService {
     private readonly promptProfile?: PromptProfileName,
     private readonly maxTopics = 8,
     private readonly accountBrand?: JsonObject,
+    private readonly topicHeatService = new TopicHeatService(),
   ) {}
 
   async createTopicReport(
@@ -66,7 +68,7 @@ export class WeixinArticleEditorialTopicService {
           ),
         },
       ];
-      return await createStructuredJsonCompletion<
+      const report = await createStructuredJsonCompletion<
         RawTopicReport,
         EditorialTopicReport
       >({
@@ -87,14 +89,18 @@ export class WeixinArticleEditorialTopicService {
             memory,
           ),
       });
+      return await this.topicHeatService.enrich(report, contents);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn(`[选题聚类] AI 生成失败，使用本地兜底: ${message}`);
-      return createFallbackTopicReport(
+      return await this.topicHeatService.enrich(
+        createFallbackTopicReport(
+          contents,
+          this.maxTopics,
+          message,
+          memory,
+        ),
         contents,
-        this.maxTopics,
-        message,
-        memory,
       );
     }
   }

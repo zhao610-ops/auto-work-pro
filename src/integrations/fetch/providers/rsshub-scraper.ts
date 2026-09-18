@@ -118,6 +118,9 @@ import {
 } from "@src/core/ports/content-scraper.ts";
 import { XMLParser } from "npm:fast-xml-parser@5.0.9";
 
+/** RSS 直连在网络异常时必须及时退出，避免串行来源抓取阻塞整次定时任务。 */
+const DIRECT_RSS_FETCH_TIMEOUT_MS = 8_000;
+
 // 类型定义
 /**
  * RSSHub 客户端配置接口
@@ -765,7 +768,9 @@ export class RsshubScraper implements ContentScraper {
       return await request(`${url.pathname}${url.search}`).json();
     }
 
-    const response = await fetch(url.href);
+    const response = await fetch(url.href, {
+      signal: AbortSignal.timeout(DIRECT_RSS_FETCH_TIMEOUT_MS),
+    });
     if (!response.ok) {
       throw new Error(
         `RSS 请求失败: ${response.status} ${response.statusText}`,

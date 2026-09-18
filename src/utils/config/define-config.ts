@@ -194,12 +194,12 @@ export interface PublishProvidersConfig {
   };
 }
 
-/** 今日头条自动定时发布。内容仍复用文章工作流预生成，不会创建微信草稿。 */
+/** 今日头条系统定时直接发布。内容仍复用文章工作流预生成，不会创建微信草稿。 */
 export interface ToutiaoAutomationConfig {
   enabled?: boolean;
   /** 每日目标发布时间（北京时间），默认 11:00。 */
   scheduleTime?: string;
-  /** 在目标时间前提前多少分钟生成并提交到头条，默认 150，满足头条至少提前 2 小时。 */
+  /** 在目标时间前提前多少分钟生成内容，默认 150；目标时间到达后才调用直接发布。 */
   preparationLeadMinutes?: number;
   /** 复用哪个文章 Runtime Profile；留空使用默认 Profile。 */
   profileId?: string;
@@ -1000,7 +1000,9 @@ export function resolveTrendPublishConfig(
         },
         toutiao: {
           enabled: article.toutiao?.enabled ?? false,
-          scheduleTime: normalizeDailyTime(article.toutiao?.scheduleTime ?? "11:00"),
+          scheduleTime: normalizeDailyTime(
+            article.toutiao?.scheduleTime ?? "11:00",
+          ),
           preparationLeadMinutes: normalizeToutiaoLeadMinutes(
             article.toutiao?.preparationLeadMinutes,
           ),
@@ -1112,8 +1114,7 @@ function normalizeDailyTime(value: string): string {
 
 function normalizeToutiaoLeadMinutes(value: number | undefined): number {
   if (!Number.isFinite(value) || value === undefined) return 150;
-  // 头条原生定时发布要求至少提前两小时；额外 10 分钟给心跳调度留余量。
-  return Math.max(130, Math.min(7 * 24 * 60, Math.floor(value)));
+  return Math.max(0, Math.min(7 * 24 * 60, Math.floor(value)));
 }
 
 function isCompatibleArticleImageModel(

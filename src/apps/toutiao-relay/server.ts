@@ -3,7 +3,7 @@ import { ToutiaoBrowserSession } from "./browser-session.ts";
 import { loadToutiaoRelayConfig } from "./config.ts";
 import { errorHttpStatus, toToutiaoRelayError } from "./errors.ts";
 import { json, ok, readJson, verifyBearerToken } from "./http.ts";
-import type { ToutiaoDraftRequest, ToutiaoScheduleRequest } from "./types.ts";
+import type { ToutiaoDraftRequest, ToutiaoPublishRequest } from "./types.ts";
 
 const logger = new Logger("toutiao-relay");
 const config = loadToutiaoRelayConfig();
@@ -22,7 +22,7 @@ Deno.serve({ port: config.port }, async (request) => {
     return json({
       ok: true,
       service: "toutiao-relay",
-      mode: "browser-draft",
+      mode: "browser-direct-publish",
       timestamp: new Date().toISOString(),
     });
   }
@@ -36,10 +36,12 @@ Deno.serve({ port: config.port }, async (request) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/toutiao/articles") {
-      return ok(await session.reconcileArticle({
-        idempotencyKey: url.searchParams.get("idempotencyKey") ?? undefined,
-        title: url.searchParams.get("title") ?? undefined,
-      }));
+      return ok(
+        await session.reconcileArticle({
+          idempotencyKey: url.searchParams.get("idempotencyKey") ?? undefined,
+          title: url.searchParams.get("title") ?? undefined,
+        }),
+      );
     }
 
     if (request.method === "POST" && url.pathname === "/api/toutiao/login") {
@@ -52,10 +54,10 @@ Deno.serve({ port: config.port }, async (request) => {
     }
 
     if (
-      request.method === "POST" && url.pathname === "/api/toutiao/scheduled"
+      request.method === "POST" && url.pathname === "/api/toutiao/publish"
     ) {
-      const payload = await readJson<ToutiaoScheduleRequest>(request);
-      return ok(await session.schedulePublication(payload));
+      const payload = await readJson<ToutiaoPublishRequest>(request);
+      return ok(await session.publishNow(payload));
     }
 
     return json({ success: false, error: "Not Found" }, { status: 404 });

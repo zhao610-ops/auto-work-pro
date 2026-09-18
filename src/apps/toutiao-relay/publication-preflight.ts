@@ -1,22 +1,22 @@
 import { ToutiaoRelayError } from "./errors.ts";
-import type { ToutiaoScheduleRequest } from "./types.ts";
+import type { ToutiaoPublishRequest } from "./types.ts";
 
 const MIN_TOUTIAO_ARTICLE_TEXT_LENGTH = 300;
 
-/** 正式定时发布前的本地硬性校验，必须在浏览器写入正文前完成。 */
-export function assertScheduleCoverProvided(
-  request: ToutiaoScheduleRequest,
+/** 正式发布前的本地硬性校验，必须在浏览器写入正文前完成。 */
+export function assertPublishCoverProvided(
+  request: ToutiaoPublishRequest,
 ): void {
   if (request.coverImagePath?.trim() || request.coverImageUrl?.trim()) return;
   throw new ToutiaoRelayError(
     "COVER_NOT_FOUND",
-    "今日头条正式定时发布必须提供原创封面；请先生成或上传 coverImagePath。",
+    "今日头条正式发布必须提供原创封面；请先生成或上传 coverImagePath。",
   );
 }
 
-/** 避免正文过短导致头条将“定时发布”按钮置灰，却被误报为选择器失效。 */
-export function assertScheduleContentLength(
-  request: ToutiaoScheduleRequest,
+/** 避免正文过短导致头条将“发布”按钮置灰，却被误报为选择器失效。 */
+export function assertPublishContentLength(
+  request: ToutiaoPublishRequest,
 ): void {
   const text = (request.contentHtml ?? request.contentText ?? "")
     .replaceAll(/<[^>]+>/g, " ")

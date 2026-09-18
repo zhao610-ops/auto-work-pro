@@ -20,9 +20,6 @@ export function loadToutiaoRelayConfig(): ToutiaoRelayConfig {
     profileDir,
     screenshotsDir,
     statePath,
-    defaultScheduleTime:
-      Deno.env.get("TOUTIAO_DEFAULT_SCHEDULE_TIME")?.trim() ||
-      "11:00",
     headless: readBooleanEnv("TOUTIAO_HEADLESS", false),
     chromeExecutablePath: optionalEnv("TOUTIAO_CHROME_EXECUTABLE_PATH"),
     chromeChannel: optionalEnv("TOUTIAO_CHROME_CHANNEL") ?? "chrome",

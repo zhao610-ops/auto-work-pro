@@ -172,6 +172,7 @@ export interface RuntimeConfigStore {
   ): Promise<Record<string, string[]>>;
 
   getSchedule(profileId: string): Promise<RuntimeSchedule | null>;
+  listSchedules(): Promise<RuntimeSchedule[]>;
   saveSchedule(input: RuntimeScheduleInput): Promise<RuntimeSchedule>;
   listDueSchedules(now: Date): Promise<RuntimeScheduleTick[]>;
   markScheduleTriggered(scheduleId: string, slot: string): Promise<boolean>;

@@ -2,6 +2,7 @@ import type { PublishResult } from "@src/core/ports/content-publisher.ts";
 import { LocalArtifactStore } from "@src/platform/local/local-artifact-store.ts";
 
 export type ScheduledMassSendStatus =
+  | "preparing"
   | "prepared"
   | "sending"
   | "sent"
@@ -14,11 +15,13 @@ export interface ScheduledMassSendRecord {
   profileId: string;
   accountId?: string;
   sourceRunId: string;
-  draftMediaId: string;
-  title: string;
+  draftMediaId?: string;
+  title?: string;
   scheduledFor: string;
   idempotencyKey: string;
   status: ScheduledMassSendStatus;
+  /** 草稿生成的恢复次数，与真正调用群发接口的 attempts 分开统计。 */
+  preparationAttempts?: number;
   attempts?: number;
   updatedAt: string;
   result?: PublishResult;

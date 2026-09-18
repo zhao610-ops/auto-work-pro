@@ -32,6 +32,8 @@ ${brandGuide}
 
 ${newsroomStyle}
 
+本账号正文固定优先级：先给可用于汇报的一句结论，再给有来源的数据/事实，再解释对国家、产业或企业经营的影响，最后列出后续观察变量。避免长篇叙事、空泛趋势、投资建议和鸡汤式建议。
+
 任务目标：
 1. 从主题层判断今天应该怎么写，而不是简单拼接每篇文章。
 2. 明确一条主线观点，让正文围绕主线展开；如果素材不够支撑主线，就明确写成精选短评。
@@ -88,7 +90,7 @@ ${newsroomStyle}
    - 对话或连续问答内容：interview
    - 主题分散但都值得提：mixed
 2. sections 控制在 3-6 个，必须引用真实 articleIds。
-3. titleDirections 给 3 个方向，必须像真实媒体标题：具体、短、有新闻钩子；禁止“AI速递”“今日快报”“一文看懂”等模板标题。
+3. titleDirections 给 3 个方向，必须像真实媒体标题：具体、短、有新闻钩子；每个标题优先使用来源可验证的知名国家/地区、企业、机构、产品或人物作为主语或限定词，禁止“AI速递”“今日快报”“一文看懂”等模板标题。不得把候选文章没有明确提及的知名主体写进标题。
 4. coverDirection 应该能直接指导图片生成，不要只写“科技感”。
 5. bodyImagePlan 只规划真正有助于理解的图片，不要为了装饰配图。
 6. riskNotes 必须指出不确定信息、单一来源、商业宣传、伦理争议或需要谨慎表述的点。
@@ -126,6 +128,9 @@ export function getArticlePlanUserPrompt(
           reason: score.reason,
           risk: score.risk,
           evidence: score.evidence,
+          heat: score.heat,
+          businessValue: score.businessValue,
+          eligibleForLead: score.eligibleForLead,
         }
         : undefined,
     };

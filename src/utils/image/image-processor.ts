@@ -25,6 +25,8 @@ interface ExtractedImageUrl {
 
 export class WeixinImageProcessor {
   private static readonly MAX_IMAGE_SIZE = 1024 * 1024; // 1MB
+  /** 单张图片压缩不能拖住整篇文章的发布。 */
+  private static readonly COMPRESSION_TIMEOUT_MS = 12_000;
 
   private imageUploader: ContentImageUploader;
   private imageDownloader: SafeImageDownloader;
@@ -48,49 +50,61 @@ export class WeixinImageProcessor {
     maxSizeInMB: number = 1,
   ): Promise<Uint8Array> {
     try {
-      const { decode } = await import(
-        "https://deno.land/x/imagescript@1.2.17/mod.ts"
-      );
+      const compressionTask = async (): Promise<Uint8Array> => {
+        const { decode } = await import(
+          "https://deno.land/x/imagescript@1.2.17/mod.ts"
+        );
       // 解码图片
-      const bytes = imageBuffer instanceof Uint8Array
-        ? imageBuffer
-        : new Uint8Array(imageBuffer);
-      const image = await decode(bytes);
-      const originalSize = bytes.byteLength / (1024 * 1024); // 转换为MB
+        const bytes = imageBuffer instanceof Uint8Array
+          ? imageBuffer
+          : new Uint8Array(imageBuffer);
+        const image = await decode(bytes);
+        const originalSize = bytes.byteLength / (1024 * 1024); // 转换为MB
 
       // 根据原始大小决定压缩策略
-      let quality: number;
-      let scale = 1;
+        let quality: number;
+        let scale = 1;
 
-      if (originalSize > 5) {
-        quality = 30;
-        scale = 0.5;
-      } else if (originalSize > 3) {
-        quality = 40;
-        scale = 0.6;
-      } else if (originalSize > 2) {
-        quality = 50;
-        scale = 0.7;
-      } else {
-        quality = 60;
-        scale = 0.8;
-      }
+        if (originalSize > 5) {
+          quality = 30;
+          scale = 0.5;
+        } else if (originalSize > 3) {
+          quality = 40;
+          scale = 0.6;
+        } else if (originalSize > 2) {
+          quality = 50;
+          scale = 0.7;
+        } else {
+          quality = 60;
+          scale = 0.8;
+        }
 
       // 调整尺寸
-      const newWidth = Math.round(image.width * scale);
-      const newHeight = Math.round(image.height * scale);
-      image.resize(newWidth, newHeight);
+        const newWidth = Math.round(image.width * scale);
+        const newHeight = Math.round(image.height * scale);
+        image.resize(newWidth, newHeight);
 
       // 编码压缩后的图片
-      const output = await image.encode(quality);
+        const output = await image.encode(quality);
 
       // 如果还是太大，再次尝试更激进的压缩
-      if (output.length > maxSizeInMB * 1024 * 1024) {
-        image.resize(Math.round(newWidth * 0.7), Math.round(newHeight * 0.7));
-        return await image.encode(Math.max(quality - 20, 20));
-      }
+        if (output.length > maxSizeInMB * 1024 * 1024) {
+          image.resize(Math.round(newWidth * 0.7), Math.round(newHeight * 0.7));
+          return await image.encode(Math.max(quality - 20, 20));
+        }
 
-      return output;
+        return output;
+      };
+
+      return await Promise.race([
+        compressionTask(),
+        new Promise<never>((_, reject) => {
+          setTimeout(
+            () => reject(new Error("图片压缩超时，已跳过该张正文图片")),
+            WeixinImageProcessor.COMPRESSION_TIMEOUT_MS,
+          );
+        }),
+      ]);
     } catch (error) {
       console.error("Image compression failed:", error);
       throw error;

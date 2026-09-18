@@ -6,20 +6,18 @@ export interface ToutiaoRelayClientConfig {
   token: string;
 }
 
-export interface ToutiaoScheduledPublishRequest {
+export interface ToutiaoDirectPublishRequest {
   title: string;
   contentHtml: string;
   coverImageUrl?: string;
   idempotencyKey: string;
-  scheduledAt: string;
 }
 
 export interface ToutiaoRelayPublishResult {
   draftId: string;
   articleId?: string;
-  status: "scheduled" | "blocked";
+  status: "published" | "blocked";
   title: string;
-  scheduledFor?: string;
   screenshotPath?: string;
   reason?: string;
   errorCode?: string;
@@ -55,18 +53,24 @@ export class ToutiaoRelayClient {
     private readonly fetcher: typeof fetch = fetch,
   ) {}
 
-  async schedule(
-    request: ToutiaoScheduledPublishRequest,
+  /** 系统调度到点后请求 Relay 直接正式发布。 */
+  async publishNow(
+    request: ToutiaoDirectPublishRequest,
   ): Promise<ToutiaoRelayPublishResult> {
-    return await this.request<ToutiaoRelayPublishResult>("/api/toutiao/scheduled", {
-      method: "POST",
-      body: JSON.stringify(request),
-    });
+    return await this.request<ToutiaoRelayPublishResult>(
+      "/api/toutiao/publish",
+      {
+        method: "POST",
+        body: JSON.stringify(request),
+      },
+    );
   }
 
   async reconcile(idempotencyKey: string): Promise<ToutiaoRelayArticleStatus> {
     return await this.request<ToutiaoRelayArticleStatus>(
-      `/api/toutiao/articles?idempotencyKey=${encodeURIComponent(idempotencyKey)}`,
+      `/api/toutiao/articles?idempotencyKey=${
+        encodeURIComponent(idempotencyKey)
+      }`,
     );
   }
 
@@ -79,8 +83,14 @@ export class ToutiaoRelayClient {
       { headers: { Authorization: `Bearer ${this.config.token}` } },
     ).catch(() => undefined);
     if (!response?.ok) return { ok: false };
-    const payload = await response.json().catch(() => ({})) as ToutiaoRelayHealthStatus;
-    return { ok: payload.ok === true, service: payload.service, mode: payload.mode };
+    const payload = await response.json().catch(
+      () => ({}),
+    ) as ToutiaoRelayHealthStatus;
+    return {
+      ok: payload.ok === true,
+      service: payload.service,
+      mode: payload.mode,
+    };
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -110,7 +120,9 @@ export class ToutiaoRelayClient {
         ),
       });
     });
-    const envelope = await response.json().catch(() => ({})) as RelayEnvelope<T>;
+    const envelope = await response.json().catch(() => ({})) as RelayEnvelope<
+      T
+    >;
     if (!response.ok || !envelope.success || envelope.data === undefined) {
       const error = typeof envelope.error === "string"
         ? envelope.error

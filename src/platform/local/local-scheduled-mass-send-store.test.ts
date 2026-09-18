@@ -25,3 +25,26 @@ Deno.test("scheduled mass send store persists prepared draft", async () => {
     await Deno.remove(directory, { recursive: true });
   }
 });
+
+Deno.test("scheduled mass send store persists an interrupted preparation for recovery", async () => {
+  const directory = await Deno.makeTempDir();
+  try {
+    const store = new LocalScheduledMassSendStore(directory);
+    await store.save({
+      scheduleId: "schedule-1",
+      scheduleSlot: "schedule-1:2026-09-12T11:00:Asia/Shanghai",
+      profileId: "profile-1",
+      sourceRunId: "cron-prepare-stable",
+      scheduledFor: "2026-09-12T03:00:00.000Z",
+      idempotencyKey: "scheduled-stable",
+      status: "preparing",
+    });
+
+    const record = await store.get("schedule-1");
+    assertEquals(record?.status, "preparing");
+    assertEquals(record?.sourceRunId, "cron-prepare-stable");
+    assertEquals(record?.draftMediaId, undefined);
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+  }
+});

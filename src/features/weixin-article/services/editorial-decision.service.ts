@@ -105,8 +105,10 @@ export function normalizeEditorialDecision(
   if (!topicIds.size) {
     throw new Error("编辑决策缺少候选主题");
   }
-  const leadTopicId = topicIds.has(stringValue(raw.leadTopicId) ?? "")
-    ? stringValue(raw.leadTopicId)!
+  const rawLeadTopicId = stringValue(raw.leadTopicId);
+  const leadTopicId = topicIds.has(rawLeadTopicId ?? "") &&
+      isLeadEligible(rawLeadTopicId!, topicReport)
+    ? rawLeadTopicId!
     : pickLeadTopicId(topicReport);
   const leadTopic =
     topicReport.clusters.find((item) => item.id === leadTopicId) ??
@@ -222,10 +224,20 @@ function createFallbackEditorialDecision(
 
 function pickLeadTopicId(topicReport: EditorialTopicReport): string {
   const leadScore =
-    [...topicReport.scores].sort((left, right) =>
-      right.finalScore - left.finalScore
-    )[0];
+    [...topicReport.scores].filter((score) => score.eligibleForLead !== false)
+      .sort((left, right) => right.finalScore - left.finalScore)[0] ??
+      [...topicReport.scores].sort((left, right) =>
+        right.finalScore - left.finalScore
+      )[0];
   return leadScore?.topicId ?? topicReport.clusters[0]?.id ?? "topic-1";
+}
+
+function isLeadEligible(
+  topicId: string,
+  report: EditorialTopicReport,
+): boolean {
+  return report.scores.find((score) => score.topicId === topicId)
+    ?.eligibleForLead !== false;
 }
 
 function normalizeSelectedTopics(

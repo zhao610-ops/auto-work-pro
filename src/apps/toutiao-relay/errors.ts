@@ -8,10 +8,9 @@ export const TOUTIAO_RELAY_ERROR_CODES = [
   "COVER_UPLOAD_FAILED",
   "DRAFT_SAVE_TIMEOUT",
   "DRAFT_SAVE_FAILED",
-  "SCHEDULE_TIME_INVALID",
-  "SCHEDULE_WINDOW_INVALID",
-  "SCHEDULE_CONTROL_NOT_FOUND",
-  "SCHEDULE_CONFIRM_FAILED",
+  "PUBLISH_CONTROL_NOT_FOUND",
+  "PUBLISH_CONFIRM_FAILED",
+  "EDITOR_NOT_FRESH",
   "RECONCILE_NOT_FOUND",
   "RECONCILE_FAILED",
   "IDEMPOTENCY_CONFLICT",
@@ -45,9 +44,6 @@ export function errorHttpStatus(code: ToutiaoRelayErrorCode): number {
   if (code === "AUTH_EXPIRED") return 401;
   if (code === "CONTENT_INVALID") return 400;
   if (code === "COVER_NOT_FOUND") return 400;
-  if (code === "SCHEDULE_TIME_INVALID" || code === "SCHEDULE_WINDOW_INVALID") {
-    return 400;
-  }
   if (code === "RECONCILE_NOT_FOUND") return 404;
   if (code === "IDEMPOTENCY_CONFLICT") return 409;
   return 500;

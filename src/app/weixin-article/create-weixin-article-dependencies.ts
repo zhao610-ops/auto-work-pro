@@ -37,6 +37,7 @@ import { WeixinArticleRenderService } from "@src/features/weixin-article/service
 import { WeixinArticleTitleService } from "@src/features/weixin-article/services/article-title.service.ts";
 import { WeixinArticleEditorialTopicService } from "@src/features/weixin-article/services/editorial-topic.service.ts";
 import { WeixinArticleEditorialDecisionService } from "@src/features/weixin-article/services/editorial-decision.service.ts";
+import { TopicHeatService } from "@src/features/weixin-article/services/topic-heat.service.ts";
 import { WeixinArticlePlanService } from "@src/features/weixin-article/services/article-plan.service.ts";
 import { WeixinArticleDraftService } from "@src/features/weixin-article/services/article-draft.service.ts";
 import { WeixinArticleResearchService } from "@src/features/weixin-article/services/article-research.service.ts";
@@ -183,6 +184,7 @@ export async function createWeixinArticleDependencies(
       promptProfile,
       8,
       accountBrand,
+      new TopicHeatService({ enableExternal: true }),
     ),
     editorialDecisionService: new WeixinArticleEditorialDecisionService(
       llmProvider,
