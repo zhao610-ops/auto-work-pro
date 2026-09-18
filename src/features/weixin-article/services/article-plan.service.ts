@@ -129,7 +129,10 @@ export function normalizeArticlePlan(
   const validArticleIds = new Set(contents.map((content) => content.id));
   const sourceArticleIds = new Set<string>();
   const format = normalizeFormat(raw.format);
-  const sections = normalizeSections(raw.sections, validArticleIds);
+  const sections = ensureThreeContentSections(
+    normalizeSections(raw.sections, validArticleIds),
+    contents,
+  );
   for (const section of sections) {
     section.articleIds.forEach((id) => sourceArticleIds.add(id));
   }
@@ -139,10 +142,7 @@ export function normalizeArticlePlan(
   }
 
   const coverDirection = normalizeCoverDirection(raw.coverDirection);
-  const bodyImagePlan = normalizeBodyImagePlan(
-    raw.bodyImagePlan,
-    new Set(sections.map((section) => section.id)),
-  );
+  const bodyImagePlan = createThreeContentImagePlan(sections);
   const riskNotes = normalizeRiskNotes(raw.riskNotes);
 
   const plan: ArticlePlan = {
@@ -158,7 +158,7 @@ export function normalizeArticlePlan(
       .join("；") ??
       decision?.whyThisNow.join("；") ??
       "基于今日选题生成的文章计划。",
-    sections,
+    sections: ensureThreeContentSections(sections, contents),
     titleDirections: normalizeTitleDirections(raw.titleDirections, contents),
     coverDirection,
     bodyImagePlan,
@@ -212,9 +212,9 @@ function createFallbackArticlePlan(
       ].filter(Boolean),
     }];
   });
-  const sections = fallbackSections.length
+  const candidateSections = fallbackSections.length
     ? fallbackSections
-    : contents.slice(0, 4).map((content, index) => ({
+    : contents.slice(0, 3).map((content, index) => ({
       id: `section-${index + 1}`,
       title: content.title || `章节 ${index + 1}`,
       intent: "保留为基础信息",
@@ -222,6 +222,7 @@ function createFallbackArticlePlan(
       articleIds: [content.id],
       keyPoints: [content.content.slice(0, 160)],
     }));
+  const sections = ensureThreeContentSections(candidateSections, contents);
   const firstTitle = sections[0]?.title ?? contents[0]?.title ?? "今日内容";
   const targetReader = stringValue(accountBrand?.audience) ??
     "关注本领域趋势的读者";
@@ -262,10 +263,7 @@ function createFallbackArticlePlan(
       textBrief: firstTitle,
       mood: "清晰、专业、少装饰",
     },
-    bodyImagePlan: {
-      enabled: false,
-      placements: [],
-    },
+    bodyImagePlan: createThreeContentImagePlan(sections),
     riskNotes: [{
       level: "medium",
       issue: decision?.duplicationRisk.reason ??
@@ -322,10 +320,7 @@ function enforceEvidenceDepthGate(
       angle: "证据不足时使用已确认来源标题。",
       reason: "缺少直接证据，避免标题承诺深度分析或检查清单。",
     }],
-    bodyImagePlan: {
-      enabled: false,
-      placements: [],
-    },
+    bodyImagePlan: createThreeContentImagePlan(sections),
     riskNotes: [evidenceGapRiskNote, ...plan.riskNotes].slice(0, 6),
     sourceArticleIds: [
       ...new Set(sections.flatMap((section) => section.articleIds)),
@@ -734,6 +729,48 @@ function normalizeSections(
   });
 }
 
+/**
+ * 一期日报固定展示三条独立内容：优先保留规划的前三个章节，缺项时从尚未
+ * 使用的来源补齐；来源本身不足三条时不虚构内容，交由上游选题质量门禁阻断。
+ */
+function ensureThreeContentSections(
+  sections: ArticlePlanSection[],
+  contents: ScrapedContent[],
+): ArticlePlanSection[] {
+  const selected = sections.slice(0, 3);
+  const usedArticleIds = new Set(
+    selected.flatMap((section) => section.articleIds),
+  );
+  for (const content of contents) {
+    if (selected.length >= 3) break;
+    if (usedArticleIds.has(content.id)) continue;
+    selected.push({
+      id: `section-${selected.length + 1}`,
+      title: content.title || `内容 ${selected.length + 1}`,
+      intent: "作为本期独立内容块，说明已确认的核心信息。",
+      angle: "只写来源明确支持的事实与影响，不补充未经证实的判断。",
+      articleIds: [content.id],
+      keyPoints: buildGroundedKeyPoints(content),
+    });
+    usedArticleIds.add(content.id);
+  }
+  return selected;
+}
+
+/** 每个内容块固定一个图片插槽；来源图优先，缺失时由后续图片服务补图。 */
+function createThreeContentImagePlan(
+  sections: ArticlePlanSection[],
+): ArticleBodyImagePlan {
+  return {
+    enabled: sections.length > 0,
+    placements: sections.map((section, index) => ({
+      sectionId: section.id,
+      purpose: `为第 ${index + 1} 条内容提供与事实主体直接相关的正文配图。`,
+      promptHint: `${section.title}：优先呈现相关人物、产品、场景或实体对象。`,
+    })),
+  };
+}
+
 function normalizeTitleDirections(
   value: unknown,
   contents: ScrapedContent[],
@@ -773,33 +810,6 @@ function normalizeCoverDirection(value: unknown): ArticleCoverDirection {
     visualBrief: "使用信息清晰、留白充足的专业封面。",
     textBrief: "今日趋势",
     mood: "专业、克制、清晰",
-  };
-}
-
-function normalizeBodyImagePlan(
-  value: unknown,
-  sectionIds: Set<string>,
-): ArticleBodyImagePlan {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { enabled: false, placements: [] };
-  }
-  const record = value as Record<string, unknown>;
-  const placements = Array.isArray(record.placements)
-    ? record.placements.flatMap((item) => {
-      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
-      const placement = item as Record<string, unknown>;
-      const sectionId = stringValue(placement.sectionId);
-      if (!sectionId || !sectionIds.has(sectionId)) return [];
-      return [{
-        sectionId,
-        purpose: stringValue(placement.purpose) ?? "辅助理解该章节",
-        promptHint: stringValue(placement.promptHint) ?? "",
-      }];
-    })
-    : [];
-  return {
-    enabled: booleanValue(record.enabled) ?? placements.length > 0,
-    placements,
   };
 }
 

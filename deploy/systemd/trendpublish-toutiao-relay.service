@@ -1,0 +1,24 @@
+# 复制到 /etc/systemd/system/trendpublish-toutiao-relay.service 后，按实际路径和运行用户调整。
+# 首次扫码登录时，必须在可访问的图形桌面中暂设 TOUTIAO_HEADLESS=false。
+[Unit]
+Description=TrendPublish Toutiao Browser Relay
+Documentation=https://github.com/liyown/ai-trend-publish
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ai-trend-publish
+EnvironmentFile=/etc/trendpublish/toutiao-relay.env
+ExecStart=/usr/bin/env deno task toutiao:relay
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+KillSignal=SIGINT
+TimeoutStopSec=45
+User=trendpublish
+Group=trendpublish
+
+[Install]
+WantedBy=multi-user.target

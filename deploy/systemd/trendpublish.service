@@ -1,0 +1,24 @@
+# 复制到 /etc/systemd/system/trendpublish.service 后，按实际路径和运行用户调整。
+# 密钥只放在 /etc/trendpublish/main.env（权限 600），不要写入 unit 文件。
+[Unit]
+Description=TrendPublish Main Service and Scheduler
+Documentation=https://github.com/liyown/ai-trend-publish
+After=network-online.target trendpublish-toutiao-relay.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ai-trend-publish
+EnvironmentFile=/etc/trendpublish/main.env
+ExecStart=/usr/bin/env deno run -A src/index.ts --config /opt/ai-trend-publish/config/trendpublish.config.ts
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+KillSignal=SIGINT
+TimeoutStopSec=45
+User=trendpublish
+Group=trendpublish
+
+[Install]
+WantedBy=multi-user.target

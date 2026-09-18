@@ -25,7 +25,7 @@ Deno.test("image layout keeps article unchanged when no media exists", async () 
   assertEquals(await service.layoutArticle(input), input);
 });
 
-Deno.test("image layout places first image at top and then between paragraphs", async () => {
+Deno.test("image layout uses one source image after the first paragraph", async () => {
   const service = new WeixinArticleImageLayoutService();
   const output = await service.layoutArticle(article({
     media: [
@@ -44,9 +44,8 @@ Deno.test("image layout places first image at top and then between paragraphs", 
 
   assertEquals(
     output.content,
-    '<img src="https://example.com/1.jpg" alt="文章配图" />' +
-      "<next_paragraph />第一段<next_paragraph />" +
-      '<img src="https://example.com/2.jpg" alt="文章配图" />' +
+    "第一段<next_paragraph />" +
+      '<img src="https://example.com/1.jpg" alt="文章配图" />' +
       "<next_paragraph />第二段<next_paragraph />第三段",
   );
 });
@@ -71,7 +70,7 @@ Deno.test("image layout escapes image URLs and ignores duplicates", async () => 
 
   assertEquals(
     output.content,
-    '<img src="https://example.com/a&quot;b.jpg" alt="文章配图" /><next_paragraph />正文',
+    '正文<next_paragraph /><img src="https://example.com/a&quot;b.jpg" alt="文章配图" />',
   );
 });
 
@@ -106,7 +105,7 @@ Deno.test("AI image layout generates image when enabled", async () => {
 
   assertEquals(
     output.content,
-    '<img src="https://example.com/ai.jpg" alt="文章配图" /><next_paragraph />第一段<next_paragraph />第二段',
+    '第一段<next_paragraph /><img src="https://example.com/ai.jpg" alt="文章配图" /><next_paragraph />第二段',
   );
 });
 
@@ -116,7 +115,10 @@ Deno.test("AI image layout falls back to existing media on generation failure", 
     {
       getGenerator: () =>
         Promise.resolve({
+          initialize: () => Promise.resolve(),
+          refresh: () => Promise.resolve(),
           generate: () => Promise.reject(new Error("boom")),
+          saveToFile: () => Promise.resolve(),
         }),
     },
     { enabled: true, imageCount: 1 },
@@ -133,7 +135,7 @@ Deno.test("AI image layout falls back to existing media on generation failure", 
 
   assertEquals(
     output.content,
-    '<img src="https://example.com/source.jpg" alt="文章配图" /><next_paragraph />正文',
+    '正文<next_paragraph /><img src="https://example.com/source.jpg" alt="文章配图" />',
   );
 });
 
@@ -141,7 +143,10 @@ function fakeImageGeneratorResolver(url: string) {
   return {
     getGenerator: () =>
       Promise.resolve({
+        initialize: () => Promise.resolve(),
+        refresh: () => Promise.resolve(),
         generate: () => Promise.resolve(url),
+        saveToFile: () => Promise.resolve(),
       }),
   };
 }

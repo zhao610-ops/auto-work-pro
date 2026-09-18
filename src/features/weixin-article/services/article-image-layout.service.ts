@@ -56,7 +56,8 @@ const DEFAULT_AI_IMAGE_LAYOUT_CONFIG: AiImageLayoutConfig = {
 };
 
 /**
- * Lays out existing article media in the body.
+ * 每个内容块只布局一张正文图。内容块由 Article Plan 映射为模板项，因此
+ * 三条内容会稳定得到三张图，而不会把同一来源的图片全部堆入正文。
  *
  * This service intentionally only decides image placement. Downloading,
  * compression, Weixin upload, and URL replacement are handled later by the
@@ -83,24 +84,19 @@ export class WeixinArticleImageLayoutService
   }
 
   layoutExistingMedia(article: WeixinTemplate): WeixinTemplate {
-    const mediaUrls = this.getUniqueMediaUrls(article.media);
-    if (mediaUrls.length === 0) {
+    const mediaUrl = this.getPrimaryMediaUrl(article.media);
+    if (!mediaUrl) {
       return article;
     }
 
     const paragraphs = article.content.split(this.paragraphSeparator);
-    let mediaIndex = 0;
     let content = "";
-
-    content += this.buildImageHtml(mediaUrls[mediaIndex++]);
-    content += this.paragraphSeparator;
-
     paragraphs.forEach((paragraph, index) => {
       content += paragraph;
-
-      if (mediaIndex < mediaUrls.length && index < paragraphs.length - 1) {
+      // 导语首段先交代事实，再给与该内容块直接相关的配图，避免标题后堆图。
+      if (index === 0) {
         content += this.paragraphSeparator;
-        content += this.buildImageHtml(mediaUrls[mediaIndex++]);
+        content += this.buildImageHtml(mediaUrl);
       }
 
       if (index < paragraphs.length - 1) {
@@ -114,18 +110,16 @@ export class WeixinArticleImageLayoutService
     };
   }
 
-  private getUniqueMediaUrls(media?: Media[]): string[] {
+  private getPrimaryMediaUrl(media?: Media[]): string | undefined {
     if (!media?.length) {
-      return [];
+      return undefined;
     }
-
-    const urls = new Set<string>();
     for (const item of media) {
       if (item.url?.trim()) {
-        urls.add(item.url.trim());
+        return item.url.trim();
       }
     }
-    return Array.from(urls);
+    return undefined;
   }
 
   private buildImageHtml(url: string): string {
@@ -137,12 +131,15 @@ export class WeixinArticleImageLayoutService
 
 export class AiArticleImageLayoutService implements ArticleImageLayoutService {
   private generatedImageEnabled = true;
+  private readonly config: AiImageLayoutConfig;
 
   constructor(
     private fallbackLayoutService = new WeixinArticleImageLayoutService(),
     private imageGeneratorResolver: AiImageGeneratorResolver,
-    private config: AiImageLayoutConfig = DEFAULT_AI_IMAGE_LAYOUT_CONFIG,
-  ) {}
+    config: Partial<AiImageLayoutConfig> = {},
+  ) {
+    this.config = { ...DEFAULT_AI_IMAGE_LAYOUT_CONFIG, ...config };
+  }
 
   setGeneratedImageEnabled(enabled: boolean): void {
     this.generatedImageEnabled = enabled;
@@ -214,10 +211,7 @@ export class AiArticleImageLayoutService implements ArticleImageLayoutService {
       });
     }
 
-    return {
-      ...article,
-      media: [...generatedMedia, ...(article.media ?? [])],
-    };
+    return { ...article, media: [...(article.media ?? []), ...generatedMedia] };
   }
 
   private async isEnabled(): Promise<boolean> {
@@ -252,7 +246,9 @@ export class AiArticleImageLayoutService implements ArticleImageLayoutService {
       .slice(0, 600);
     return [
       `为中文微信公众号“${profile.label}”文章生成一张正文配图。`,
-      "画面方向：专业媒体配图，不要做广告海报，不要生成封面标题，不要出现任何文字。",
+      "画面方向：真实新闻摄影或商业纪实摄影，不要插画、3D 渲染、赛博朋克或广告海报。",
+      "画面主体必须是该段落涉及的人、产品、设备、门店、工厂或事件现场，不要抽象科技背景。",
+      "不要生成封面标题、文字、Logo、水印、二维码；不得模仿真实新闻照片或公众人物肖像。",
       `视觉要求：${profile.imageGuidance}`,
       "避免：水印、Logo、二维码、可识别人物脸部、夸张赛博朋克、过度蓝紫渐变、廉价股票素材感。",
       "构图：适合放在公众号正文段落之间，主体明确，留有呼吸感，横竖构图均衡。",

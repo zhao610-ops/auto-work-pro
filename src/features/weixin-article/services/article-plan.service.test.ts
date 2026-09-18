@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "@std/assert";
+import { assertEquals } from "@std/assert";
 import type { LLMProvider } from "@src/core/ports/llm.ts";
 import type { ScrapedContent } from "@src/core/ports/content-scraper.ts";
 import type { EditorialDecision } from "@src/features/weixin-article/domain/editorial-decision.ts";
@@ -201,24 +201,25 @@ Deno.test("article plan fallback keeps account reader and title preference", asy
   );
 });
 
-Deno.test("normalizeArticlePlan rejects plans without valid sections", () => {
-  assertThrows(
-    () =>
-      normalizeArticlePlan(
-        {
-          sections: [{
-            id: "section-1",
-            title: "无效章节",
-            articleIds: ["missing"],
-          }],
-        },
-        topicReport,
-        contents,
-        false,
-      ),
-    Error,
-    "文章计划缺少有效章节",
+Deno.test("normalizeArticlePlan 用未使用来源补齐无效章节", () => {
+  const plan = normalizeArticlePlan(
+    {
+      sections: [{
+        id: "section-1",
+        title: "无效章节",
+        articleIds: ["missing"],
+      }],
+    },
+    topicReport,
+    contents,
+    false,
   );
+
+  assertEquals(plan.sections.map((section) => section.articleIds[0]), [
+    "a1",
+    "a2",
+  ]);
+  assertEquals(plan.bodyImagePlan.placements.length, 2);
 });
 
 Deno.test("normalizeArticlePlan grounds unsupported planned entities to source content", () => {
