@@ -201,7 +201,7 @@ Deno.test("article plan fallback keeps account reader and title preference", asy
   );
 });
 
-Deno.test("normalizeArticlePlan 用未使用来源补齐无效章节", () => {
+Deno.test("normalizeArticlePlan 在章节无效时仅回退到单一主线", () => {
   const plan = normalizeArticlePlan(
     {
       sections: [{
@@ -215,11 +215,8 @@ Deno.test("normalizeArticlePlan 用未使用来源补齐无效章节", () => {
     false,
   );
 
-  assertEquals(plan.sections.map((section) => section.articleIds[0]), [
-    "a1",
-    "a2",
-  ]);
-  assertEquals(plan.bodyImagePlan.placements.length, 2);
+  assertEquals(plan.sections.map((section) => section.articleIds[0]), ["a1"]);
+  assertEquals(plan.bodyImagePlan.placements.length, 1);
 });
 
 Deno.test("normalizeArticlePlan grounds unsupported planned entities to source content", () => {

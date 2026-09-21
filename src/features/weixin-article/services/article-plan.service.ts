@@ -158,7 +158,7 @@ export function normalizeArticlePlan(
       .join("；") ??
       decision?.whyThisNow.join("；") ??
       "基于今日选题生成的文章计划。",
-    sections: ensureThreeContentSections(sections, contents),
+    sections,
     titleDirections: normalizeTitleDirections(raw.titleDirections, contents),
     coverDirection,
     bodyImagePlan,
@@ -730,31 +730,23 @@ function normalizeSections(
 }
 
 /**
- * 一期日报固定展示三条独立内容：优先保留规划的前三个章节，缺项时从尚未
- * 使用的来源补齐；来源本身不足三条时不虚构内容，交由上游选题质量门禁阻断。
+ * 章节数量由主线证据决定。不得用无关热点补齐固定篇幅。
  */
 function ensureThreeContentSections(
   sections: ArticlePlanSection[],
   contents: ScrapedContent[],
 ): ArticlePlanSection[] {
-  const selected = sections.slice(0, 3);
-  const usedArticleIds = new Set(
-    selected.flatMap((section) => section.articleIds),
-  );
-  for (const content of contents) {
-    if (selected.length >= 3) break;
-    if (usedArticleIds.has(content.id)) continue;
-    selected.push({
-      id: `section-${selected.length + 1}`,
-      title: content.title || `内容 ${selected.length + 1}`,
-      intent: "作为本期独立内容块，说明已确认的核心信息。",
-      angle: "只写来源明确支持的事实与影响，不补充未经证实的判断。",
-      articleIds: [content.id],
-      keyPoints: buildGroundedKeyPoints(content),
-    });
-    usedArticleIds.add(content.id);
-  }
-  return selected;
+  if (sections.length) return sections.slice(0, 3);
+  const lead = contents[0];
+  if (!lead) return [];
+  return [{
+    id: "section-1",
+    title: lead.title || "本期主线",
+    intent: "围绕唯一可验证主线说明核心事实与业务影响。",
+    angle: "仅使用该主线来源明确支持的信息，不补充无关热点。",
+    articleIds: [lead.id],
+    keyPoints: buildGroundedKeyPoints(lead),
+  }];
 }
 
 /** 每个内容块固定一个图片插槽；来源图优先，缺失时由后续图片服务补图。 */
