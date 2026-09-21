@@ -2,6 +2,7 @@ import { assertEquals } from "@std/assert";
 import type { ArticleQualityReview } from "@src/features/weixin-article/domain/quality-review.ts";
 import {
   evaluateArticleQualityGate,
+  getScheduledMassSendBlockReason,
   resolveArticlePublishMode,
 } from "@src/features/weixin-article/services/quality-gate.service.ts";
 
@@ -115,6 +116,33 @@ Deno.test("quality gate can be bypassed by config forcePublish", () => {
   assertEquals(decision.allowed, true);
   assertEquals(decision.bypassed, true);
   assertEquals(decision.reason.includes("配置项 forcePublish"), true);
+});
+
+Deno.test("scheduled mass send blocks an article that did not pass review", () => {
+  const decision = evaluateArticleQualityGate({
+    review: { ...baseReview, overallScore: 70, recommendedAction: "revise" },
+    config: baseConfig,
+    dryRun: false,
+  });
+
+  assertEquals(
+    getScheduledMassSendBlockReason(decision)?.includes("审稿"),
+    true,
+  );
+});
+
+Deno.test("scheduled mass send never accepts a force-publish bypass", () => {
+  const decision = evaluateArticleQualityGate({
+    review: { ...baseReview, overallScore: 70 },
+    config: baseConfig,
+    dryRun: false,
+    forcePublish: true,
+  });
+
+  assertEquals(
+    getScheduledMassSendBlockReason(decision),
+    "定时群发不允许绕过质量门禁",
+  );
 });
 
 Deno.test("quality gate never bypasses local compliance blockers", () => {

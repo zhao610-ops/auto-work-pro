@@ -3,6 +3,41 @@ import { redactSensitiveText } from "@src/utils/security/redact.ts";
 
 const logger = new Logger("http-client");
 
+const FETCH_PROXY_URL_ENV = "TRENDPUBLISH_FETCH_PROXY_URL";
+const FETCH_PROXY_HOSTS_ENV = "TRENDPUBLISH_FETCH_PROXY_HOSTS";
+
+let proxyClient: Deno.HttpClient | undefined;
+let proxyClientUrl: string | undefined;
+
+/** 仅将白名单中的海外抓取域名转发至代理，避免发布和国内接口绕行。 */
+export function fetchWithConfiguredProxy(
+  input: string | URL,
+  options: RequestInit = {},
+): Promise<Response> {
+  const url = input instanceof URL ? input : new URL(input);
+  const client = getProxyClientForHost(url.hostname);
+  return client ? fetch(url, { ...options, client }) : fetch(url, options);
+}
+
+function getProxyClientForHost(hostname: string): Deno.HttpClient | undefined {
+  const proxyUrl = Deno.env.get(FETCH_PROXY_URL_ENV)?.trim();
+  const allowedHosts = Deno.env.get(FETCH_PROXY_HOSTS_ENV)
+    ?.split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean) ?? [];
+
+  if (!proxyUrl || !allowedHosts.some((host) => hostname === host || hostname.endsWith(`.${host}`))) {
+    return undefined;
+  }
+
+  if (!proxyClient || proxyClientUrl !== proxyUrl) {
+    proxyClient?.close();
+    proxyClient = Deno.createHttpClient({ proxy: { url: proxyUrl } });
+    proxyClientUrl = proxyUrl;
+  }
+  return proxyClient;
+}
+
 // 自定义错误类型
 export class HttpError extends Error {
   constructor(
@@ -59,7 +94,7 @@ export class HttpClient {
     const id = setTimeout(() => controller.abort(), timeout);
 
     try {
-      const response = await fetch(url, {
+      const response = await fetchWithConfiguredProxy(url, {
         ...fetchOptions,
         signal: controller.signal,
       });

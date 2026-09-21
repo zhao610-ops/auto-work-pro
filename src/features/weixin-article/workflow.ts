@@ -25,7 +25,7 @@ import type { EvidencePack } from "@src/features/weixin-article/domain/evidence.
 import type { EditorialMemoryContext } from "@src/core/ports/editorial-memory-store.ts";
 import {
   evaluateArticleQualityGate,
-  getHardQualityBlockReason,
+  getScheduledMassSendBlockReason,
   resolveArticlePublishMode,
 } from "@src/features/weixin-article/services/quality-gate.service.ts";
 import {
@@ -1034,11 +1034,8 @@ export class WeixinArticleWorkflow {
           }
           const isScheduledPreparation = event.payload.prepareOnly === true &&
             this.dependencies.config.publishMode === "mass" && !dryRun;
-          const hardBlockReason = isScheduledPreparation
-            ? getHardQualityBlockReason(
-              finalReview,
-              this.dependencies.config.qualityGate,
-            )
+          const scheduledBlockReason = isScheduledPreparation
+            ? getScheduledMassSendBlockReason(qualityGateDecision)
             : null;
           const publishResult = dryRun
             ? {
@@ -1057,11 +1054,11 @@ export class WeixinArticleWorkflow {
                 "draft",
                 runId,
               ),
-              status: hardBlockReason
+              status: scheduledBlockReason
                 ? "blocked" as const
                 : "scheduled" as const,
               scheduledFor: event.payload.scheduledSendAt,
-              reason: hardBlockReason ??
+              reason: scheduledBlockReason ??
                 (qualityGateDecision.allowed
                   ? "质量审稿通过，草稿已提前准备，等待定时群发"
                   : "已自动修订并保留最佳版本，等待定时群发"),

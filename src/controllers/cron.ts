@@ -30,10 +30,13 @@ import {
 import { join } from "node:path";
 import { processToutiaoSchedule } from "@src/controllers/toutiao-scheduler.ts";
 const logger = new Logger("cron");
-const PREPARE_LEAD_MS = 10 * 60 * 1000;
+/** 预留抓取、生成、图片处理和审稿时间；实际群发仍严格等待目标时刻。 */
+const PREPARE_LEAD_MS = 30 * 60 * 1000;
 const RECOVERY_SCAN_MS = 26 * 60 * 60 * 1000;
 /** 同一个排期的生成任务最多独占 30 分钟，防止五分钟心跳重复启动同一 runId。 */
 const PREPARATION_LEASE_MS = 30 * 60 * 1000;
+const PREPARATION_RETRY_BASE_MS = 10 * 60 * 1000;
+const PREPARATION_RETRY_MAX_MS = 30 * 60 * 1000;
 /** 微信群发网络请求失去回执后，允许使用同一幂等键恢复一次。 */
 const SENDING_LEASE_MS = 6 * 60 * 1000;
 export enum WorkflowType {
@@ -116,6 +119,12 @@ export async function prepareUpcomingMassSends(
     if (scheduledFor.getTime() > now.getTime() + PREPARE_LEAD_MS) continue;
     const existing = await queue.get(due.schedule.id);
     if (existing?.scheduleSlot === due.slot) {
+      if (!isPreparationRetryDue(existing, now)) {
+        logger.info(
+          `[定时群发] 等待下一次补生成: ${existing.nextPreparationAt}`,
+        );
+        continue;
+      }
       if (
         !resumeInterruptedPreparation &&
         hasActivePreparationLease(existing, now)
@@ -180,10 +189,24 @@ export async function prepareUpcomingMassSends(
         publishResult.status !== "scheduled" ||
         !publishResult.draftMediaId
       ) {
+        const reason = publishResult.reason ?? publishResult.status;
+        const retryAt = nextPreparationRetryAt(preparationAttempt);
+        await queue.save({
+          scheduleId: due.schedule.id,
+          scheduleSlot: due.slot,
+          profileId: due.schedule.profileId,
+          sourceRunId: runId,
+          title: title.title,
+          scheduledFor: scheduledFor.toISOString(),
+          idempotencyKey,
+          status: "blocked",
+          preparationAttempts: preparationAttempt,
+          attempts: existing?.scheduleSlot === due.slot ? existing.attempts : 0,
+          nextPreparationAt: retryAt.toISOString(),
+          error: reason,
+        });
         logger.warn(
-          `[定时群发] 草稿未进入待发送队列: ${
-            publishResult.reason ?? publishResult.status
-          }`,
+          `[定时群发] 草稿未达标，${retryAt.toISOString()} 自动补生成: ${reason}`,
         );
         continue;
       }
@@ -207,7 +230,25 @@ export async function prepareUpcomingMassSends(
         `[定时群发] 草稿准备完成，将在 ${scheduledFor.toISOString()} 群发: ${title.title}`,
       );
     } catch (error) {
-      logger.error("[定时群发] 提前生成草稿失败:", error);
+      const message = error instanceof Error ? error.message : String(error);
+      const retryAt = nextPreparationRetryAt(preparationAttempt);
+      await queue.save({
+        scheduleId: due.schedule.id,
+        scheduleSlot: due.slot,
+        profileId: due.schedule.profileId,
+        sourceRunId: runId,
+        scheduledFor: scheduledFor.toISOString(),
+        idempotencyKey,
+        status: "failed",
+        preparationAttempts: preparationAttempt,
+        attempts: existing?.scheduleSlot === due.slot ? existing.attempts : 0,
+        nextPreparationAt: retryAt.toISOString(),
+        error: message,
+      });
+      logger.error(
+        `[定时群发] 提前生成失败，${retryAt.toISOString()} 自动补生成:`,
+        error,
+      );
     }
   }
 }
@@ -222,6 +263,27 @@ export function hasActivePreparationLease(
   if (!Number.isFinite(updatedAt)) return false;
   const age = now.getTime() - updatedAt;
   return age >= 0 && age < PREPARATION_LEASE_MS;
+}
+
+/** 质量未达标或生成失败时逐步退避，避免每个心跳重复消耗外部 API。 */
+export function nextPreparationRetryAt(
+  attempt: number,
+  now = new Date(),
+): Date {
+  const delay = Math.min(
+    PREPARATION_RETRY_MAX_MS,
+    PREPARATION_RETRY_BASE_MS * Math.max(1, Math.min(attempt, 3)),
+  );
+  return new Date(now.getTime() + delay);
+}
+
+export function isPreparationRetryDue(
+  record: ScheduledMassSendRecord,
+  now: Date,
+): boolean {
+  if (!record.nextPreparationAt) return true;
+  const timestamp = Date.parse(record.nextPreparationAt);
+  return !Number.isFinite(timestamp) || timestamp <= now.getTime();
 }
 
 export async function dispatchDueMassSends(
@@ -243,6 +305,10 @@ export async function dispatchDueMassSends(
       continue;
     }
     if (record.status === "sent" || record.status === "preparing") continue;
+    if (
+      (record.status === "blocked" || record.status === "failed") &&
+      !record.draftMediaId
+    ) continue;
     if (
       record.status === "sending" &&
       !resumeInterruptedSend &&

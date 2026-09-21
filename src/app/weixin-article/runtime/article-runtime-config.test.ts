@@ -73,7 +73,7 @@ Deno.test("runtime config merges TS config sources and fetch groups into existin
   );
 
   assertEquals(detail.fetchGroups.web, ["firecrawl", "jina"]);
-  assertEquals(detail.fetchGroups.search, ["jina-search"]);
+  assertEquals(detail.fetchGroups.search, undefined);
   assertEquals(detail.sources.map((item) => item.raw), [
     "web:https://example.com",
     "search:AI agent news",
@@ -84,7 +84,7 @@ Deno.test("runtime config merges TS config sources and fetch groups into existin
   ]);
 });
 
-Deno.test("runtime config appends new TS fetch fallbacks to existing runtime groups", async () => {
+Deno.test("runtime config keeps an explicit runtime fetch-group override", async () => {
   const store = new SQLiteRuntimeConfigStore(":memory:");
   const config = createConfig();
   await seedArticleRuntimeConfig(store, config);
@@ -96,7 +96,7 @@ Deno.test("runtime config appends new TS fetch fallbacks to existing runtime gro
   });
 
   const refreshed = await getArticleRuntimeProfileDetail(store, config);
-  assertEquals(refreshed.fetchGroups.web, ["firecrawl", "jina"]);
+  assertEquals(refreshed.fetchGroups.web, ["firecrawl"]);
 });
 
 Deno.test("runtime config resolves capability references and feature overrides", async () => {

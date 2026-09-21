@@ -54,14 +54,14 @@ export class WeixinImageProcessor {
         const { decode } = await import(
           "https://deno.land/x/imagescript@1.2.17/mod.ts"
         );
-      // 解码图片
+        // 解码图片
         const bytes = imageBuffer instanceof Uint8Array
           ? imageBuffer
           : new Uint8Array(imageBuffer);
         const image = await decode(bytes);
         const originalSize = bytes.byteLength / (1024 * 1024); // 转换为MB
 
-      // 根据原始大小决定压缩策略
+        // 根据原始大小决定压缩策略
         let quality: number;
         let scale = 1;
 
@@ -79,15 +79,15 @@ export class WeixinImageProcessor {
           scale = 0.8;
         }
 
-      // 调整尺寸
+        // 调整尺寸
         const newWidth = Math.round(image.width * scale);
         const newHeight = Math.round(image.height * scale);
         image.resize(newWidth, newHeight);
 
-      // 编码压缩后的图片
+        // 编码压缩后的图片
         const output = await image.encode(quality);
 
-      // 如果还是太大，再次尝试更激进的压缩
+        // 如果还是太大，再次尝试更激进的压缩
         if (output.length > maxSizeInMB * 1024 * 1024) {
           image.resize(Math.round(newWidth * 0.7), Math.round(newHeight * 0.7));
           return await image.encode(Math.max(quality - 20, 20));
@@ -287,11 +287,18 @@ export class WeixinImageProcessor {
 }
 
 function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+  // 富文本会在多次渲染后出现 &amp;amp;，签名 URL 只要少还原一层就会 403。
+  let decoded = value;
+  for (let round = 0; round < 3; round++) {
+    const next = decoded
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">");
+    if (next === decoded) break;
+    decoded = next;
+  }
+  return decoded;
 }

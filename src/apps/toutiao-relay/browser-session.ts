@@ -28,6 +28,8 @@ const CONTENT_LIST_URL = "https://mp.toutiao.com/profile_v4/manage/content/all";
 
 export class ToutiaoBrowserSession {
   private context?: BrowserContext;
+  /** 并发请求同时到达时，共用同一次浏览器启动，不能各自抢占同一资料目录。 */
+  private contextLaunching?: Promise<BrowserContext>;
   private readonly records: ToutiaoArticleRecordStore;
 
   constructor(private readonly config: ToutiaoRelayConfig) {
@@ -376,6 +378,17 @@ export class ToutiaoBrowserSession {
 
   private async ensureContext(forceVisible: boolean): Promise<BrowserContext> {
     if (this.context) return this.context;
+    if (this.contextLaunching) return await this.contextLaunching;
+
+    this.contextLaunching = this.launchContext(forceVisible);
+    try {
+      return await this.contextLaunching;
+    } finally {
+      this.contextLaunching = undefined;
+    }
+  }
+
+  private async launchContext(forceVisible: boolean): Promise<BrowserContext> {
     await Deno.mkdir(this.config.profileDir, { recursive: true });
     await Deno.mkdir(this.config.screenshotsDir, { recursive: true });
 
@@ -390,6 +403,12 @@ export class ToutiaoBrowserSession {
       args: [
         "--disable-blink-features=AutomationControlled",
         "--disable-dev-shm-usage",
+        "--disable-crash-reporter",
+        "--disable-breakpad",
+        // 仅供隔离的 Docker Relay 使用；常规环境不设置该变量，仍保留浏览器沙箱。
+        ...(Deno.env.get("TOUTIAO_CHROME_NO_SANDBOX") === "true"
+          ? ["--no-sandbox"]
+          : []),
       ],
     };
 
@@ -861,7 +880,10 @@ async function publishImmediately(page: Page): Promise<void> {
       "今日头条将“预览并发布”按钮置灰；请检查正文长度、封面和发布必填项。",
     );
   }
-  await previewButton.click();
+  // 头条编辑器的顶部导航在较小的无头浏览器视口中可能遮挡底部操作区。
+  // 先滚动到可视范围，再强制点击实际按钮，避免被导航条拦截。
+  await previewButton.scrollIntoViewIfNeeded();
+  await previewButton.click({ force: true });
 
   const confirmButton = page.getByRole("button", {
     name: /^(发布|确认发布|立即发布)$/,
@@ -881,7 +903,8 @@ async function publishImmediately(page: Page): Promise<void> {
       "今日头条将最终发布确认按钮置灰；请检查发布必填项。",
     );
   }
-  await confirmButton.click();
+  await confirmButton.scrollIntoViewIfNeeded();
+  await confirmButton.click({ force: true });
   const success = await Promise.any([
     page.getByText(/发布成功|作品发布成功|已发布成功/).first().waitFor({
       state: "visible",

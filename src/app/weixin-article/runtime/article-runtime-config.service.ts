@@ -838,7 +838,11 @@ async function getFetchGroups(
       providers as FetchProviderName[],
     ]),
   );
-  return mergeFetchGroups(baseConfig.fetchGroups, runtimeGroups);
+  // Runtime 配置来自 Dashboard，是运营时的明确选择。若仍把 TS 配置追加回来，
+  // 用户无法停用已耗尽额度或异常的 provider（例如 Firecrawl 402）。
+  return Object.keys(runtimeGroups).length > 0
+    ? normalizeFetchGroups(runtimeGroups)
+    : normalizeFetchGroups(baseConfig.fetchGroups);
 }
 
 function mergeFetchGroups(

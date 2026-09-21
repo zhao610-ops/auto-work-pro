@@ -1,0 +1,25 @@
+FROM trendpublish:local
+
+USER root
+
+RUN sed -i \
+    -e 's|deb.debian.org/debian-security|mirrors.aliyun.com/debian-security|g' \
+    -e 's|deb.debian.org/debian|mirrors.aliyun.com/debian|g' \
+    /etc/apt/sources.list.d/debian.sources \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends \
+    chromium \
+    novnc \
+    websockify \
+    x11vnc \
+    xvfb \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY deploy/toutiao-relay-entrypoint.sh /usr/local/bin/toutiao-relay-entrypoint
+RUN chmod 755 /usr/local/bin/toutiao-relay-entrypoint
+
+USER deno
+
+EXPOSE 8091 6080
+
+ENTRYPOINT ["/usr/local/bin/toutiao-relay-entrypoint"]

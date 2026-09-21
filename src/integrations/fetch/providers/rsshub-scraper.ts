@@ -117,6 +117,7 @@ import {
   ScraperOptions,
 } from "@src/core/ports/content-scraper.ts";
 import { XMLParser } from "npm:fast-xml-parser@5.0.9";
+import { fetchWithConfiguredProxy } from "@src/utils/http/http-client.ts";
 
 /** RSS 直连在网络异常时必须及时退出，避免串行来源抓取阻塞整次定时任务。 */
 const DIRECT_RSS_FETCH_TIMEOUT_MS = 8_000;
@@ -768,7 +769,7 @@ export class RsshubScraper implements ContentScraper {
       return await request(`${url.pathname}${url.search}`).json();
     }
 
-    const response = await fetch(url.href, {
+    const response = await fetchWithConfiguredProxy(url, {
       signal: AbortSignal.timeout(DIRECT_RSS_FETCH_TIMEOUT_MS),
     });
     if (!response.ok) {

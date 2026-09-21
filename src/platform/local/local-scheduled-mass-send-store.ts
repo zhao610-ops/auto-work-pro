@@ -23,6 +23,8 @@ export interface ScheduledMassSendRecord {
   /** 草稿生成的恢复次数，与真正调用群发接口的 attempts 分开统计。 */
   preparationAttempts?: number;
   attempts?: number;
+  /** 质量不达标或生成失败后的下一次自动补生成时间。 */
+  nextPreparationAt?: string;
   updatedAt: string;
   result?: PublishResult;
   error?: string;

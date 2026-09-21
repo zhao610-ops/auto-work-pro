@@ -53,3 +53,41 @@ Deno.test("WeixinImageProcessor decodes escaped signed URLs and avoids unsigned 
     globalThis.fetch = originalFetch;
   }
 });
+
+Deno.test("WeixinImageProcessor decodes doubly escaped signed URLs", async () => {
+  const originalFetch = globalThis.fetch;
+  const signedUrl =
+    "https://example.com/path/image.png?Expires=1&Signature=sig";
+  const doublyEscapedUrl = signedUrl.replace(/&/g, "&amp;").replace(
+    /&/g,
+    "&amp;",
+  );
+  const fetchedUrls: string[] = [];
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    fetchedUrls.push(String(input));
+    return Promise.resolve(
+      new Response(init?.method === "HEAD" ? null : new Uint8Array([1]), {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      }),
+    );
+  }) as typeof fetch;
+  const uploader: ContentImageUploader = {
+    async uploadContentImage() {
+      return "https://mmbiz.qpic.cn/uploaded.png";
+    },
+  };
+  try {
+    const processor = new WeixinImageProcessor(
+      uploader,
+      new SafeImageDownloader({
+        fetchImpl: globalThis.fetch,
+        resolveHostname: async () => ["93.184.216.34"],
+      }),
+    );
+    await processor.processContent(`<img src="${doublyEscapedUrl}">`);
+    assertEquals(fetchedUrls, [signedUrl]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

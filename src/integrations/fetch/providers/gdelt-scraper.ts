@@ -9,6 +9,7 @@ import {
   toSearchScrapedContent,
 } from "./search-result-utils.ts";
 import { Logger } from "@zilla/logger";
+import { fetchWithConfiguredProxy } from "@src/utils/http/http-client.ts";
 
 const logger = new Logger("gdelt-scraper");
 
@@ -79,7 +80,7 @@ async function fetchJsonWithTextFallback(
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithConfiguredProxy(url, {
       method: "GET",
       headers: {
         "Accept": "application/json,text/plain",

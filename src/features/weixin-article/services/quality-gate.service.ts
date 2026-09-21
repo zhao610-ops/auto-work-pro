@@ -38,6 +38,20 @@ export function getHardQualityBlockReason(
   return null;
 }
 
+/**
+ * 定时群发比普通草稿更严格：只有质量门禁明确放行的内容才可进入发送队列。
+ * `forcePublish` 只能用于人工发起的特殊流程，不能让定时群发绕过质量结论。
+ */
+export function getScheduledMassSendBlockReason(
+  decision: QualityGateDecision,
+): string | null {
+  if (!decision.allowed) return decision.reason;
+  if (decision.bypassed) {
+    return "定时群发不允许绕过质量门禁";
+  }
+  return null;
+}
+
 export function evaluateArticleQualityGate(
   input: {
     review: ArticleQualityReview;
