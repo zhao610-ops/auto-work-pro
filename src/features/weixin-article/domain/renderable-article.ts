@@ -15,7 +15,6 @@ export interface WeixinTemplate extends GeneratedArticleTemplate {
 }
 
 export interface ArticleImageLayoutService {
-  setGeneratedImageEnabled?(enabled: boolean): void;
   layoutArticle(article: WeixinTemplate): Promise<WeixinTemplate>;
   layoutArticles(articles: WeixinTemplate[]): Promise<WeixinTemplate[]>;
 }

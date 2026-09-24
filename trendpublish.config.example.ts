@@ -90,6 +90,11 @@ export default defineConfig({
         apiHost: "https://api.minimax.io",
       },
     },
+    stockPhoto: {
+      pexels: {
+        apiKey: "",
+      },
+    },
 
     /**
      * 发布凭证。
@@ -313,20 +318,10 @@ export default defineConfig({
         model: "qwen-image-2.0-pro",
       },
 
-      /**
-       * 正文 AI 配图。
-       *
-       * mode:
-       * - "off": 不生成正文配图。
-       * - "missing": 只给没有抓取到原文图片的文章补图。
-       * - "all": 每篇文章都尝试生成正文配图。
-       */
+      /** 原文图优先；原文缺图时从 Pexels 检索相关横图。 */
       bodyImages: {
         mode: "off",
-        provider: "dashscope",
-        model: "qwen-image-2.0",
         count: 1,
-        size: "1024*1024",
       },
 
       /**

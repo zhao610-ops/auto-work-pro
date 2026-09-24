@@ -51,10 +51,6 @@ export default defineConfig((runtime) => {
     "COVER_PROVIDER",
     "dashscope",
   ) as ArticleImageProvider;
-  const bodyImagesProvider = runtime.value(
-    "BODY_IMAGES_PROVIDER",
-    "dashscope",
-  ) as ArticleImageProvider;
   const weixinRelayUrl = runtime.secret("WEIXIN_RELAY_URL");
   const weixinRelayToken = runtime.secret("WEIXIN_RELAY_TOKEN");
   const configuredPublishProvider = runtime.value(
@@ -117,6 +113,11 @@ export default defineConfig((runtime) => {
         minimax: {
           apiKey: runtime.secret("MINIMAX_API_KEY"),
           apiHost: runtime.value("MINIMAX_API_HOST", "https://api.minimax.io"),
+        },
+      },
+      stockPhoto: {
+        pexels: {
+          apiKey: runtime.secret("PEXELS_API_KEY"),
         },
       },
       publish: {
@@ -201,13 +202,7 @@ export default defineConfig((runtime) => {
             | "off"
             | "missing"
             | "all",
-          provider: bodyImagesProvider,
-          model: runtime.value("BODY_IMAGES_MODEL", "qwen-image-2.0"),
           count: Number(runtime.value("BODY_IMAGES_COUNT", "1")),
-          size: runtime.value(
-            "BODY_IMAGES_SIZE",
-            "1024*1024",
-          ) as `${number}*${number}`,
         },
         deduplication: {
           enabled: false,

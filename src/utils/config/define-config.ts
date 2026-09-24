@@ -66,9 +66,8 @@ export type TrendPublishConfigSource =
 /**
  * OpenAI Chat Completions 兼容模型接口配置。
  *
- * 默认情况下，文章排序、摘要、标题生成、动态微信 HTML 生成和 AI 配图提示词
- * 都会使用这一套聊天模型配置。只有具体功能显式声明 provider 时，才会走
- * 功能自己的 provider 选择。
+ * 默认情况下，文章排序、摘要、标题生成和动态微信 HTML 生成都会使用这一套
+ * 聊天模型配置。封面生图、Pexels 正文配图等能力使用各自的 provider。
  */
 export interface OpenAICompatibleConfig {
   /** API 基础地址，例如 "https://api.deepseek.com/v1"。 */
@@ -227,6 +226,16 @@ export interface VectorProvidersConfig {
   embedding?: OpenAICompatibleConfig;
 }
 
+/** 正文图库供应商凭证。 */
+export interface StockPhotoProvidersConfig {
+  pexels?: {
+    /** Pexels 官方 API Key。建议通过 PEXELS_API_KEY 环境变量注入。 */
+    apiKey?: string;
+    /** 主要用于测试或私有中继，生产环境保持默认即可。 */
+    apiHost?: string;
+  };
+}
+
 /**
  * 外部服务供应商配置。
  *
@@ -240,6 +249,8 @@ export interface TrendPublishProvidersConfig {
   fetch?: FetchProvidersConfig;
   /** 图片生成 provider 凭证。 */
   image?: ImageProvidersConfig;
+  /** 正文缺图时使用的正版图库凭证。 */
+  stockPhoto?: StockPhotoProvidersConfig;
   /** 发布 provider 凭证。 */
   publish?: PublishProvidersConfig;
   /** 通知 provider 凭证。 */
@@ -320,23 +331,23 @@ export interface ArticleCoverConfig {
   model?: string;
 }
 
-/** 微信文章正文配图配置。 */
+/** 微信文章正文配图配置。原文缺图时统一从 Pexels 检索。 */
 export interface ArticleBodyImagesConfig {
   /**
-   * 正文配图生成模式。
+   * 正文配图模式。
    *
-   * - "off": 不生成正文配图。
-   * - "missing": 只给没有抓取到原文图片的文章补图。
-   * - "all": 每篇文章都尝试生成正文配图。
+   * - "off": 只使用抓取到的原文图片。
+   * - "missing": 原文缺图时从 Pexels 检索。
+   * - "all": 兼容旧配置，当前行为与 "missing" 相同。
    */
   mode?: ArticleBodyImageMode;
-  /** 正文配图 provider。支持 "dashscope" 和 "minimax"。 */
+  /** @deprecated 正文已不再 AI 生图，仅为兼容旧配置保留。 */
   provider?: ArticleImageProvider;
-  /** provider 模型 ID，例如 DashScope 的 "qwen-image-2.0" 或 MiniMax 的 "image-01"。 */
+  /** @deprecated 正文已不再 AI 生图，仅为兼容旧配置保留。 */
   model?: string;
-  /** 每篇文章最多生成几张正文配图。 */
+  /** 每个章节最多插入几张图；当前固定为 1。 */
   count?: number;
-  /** 图片尺寸字符串，例如 "1024*1024"。 */
+  /** @deprecated Pexels 返回横图，后续会由微信图片处理器按平台限制压缩。 */
   size?: ArticleImageSize;
 }
 
@@ -592,6 +603,12 @@ export interface ResolvedTrendPublishConfig {
         apiKey: string;
       };
       minimax: {
+        apiKey: string;
+        apiHost: string;
+      };
+    };
+    stockPhoto: {
+      pexels: {
         apiKey: string;
         apiHost: string;
       };
@@ -895,6 +912,13 @@ export function resolveTrendPublishConfig(
           apiKey: config.providers?.image?.minimax?.apiKey ?? "",
           apiHost: config.providers?.image?.minimax?.apiHost ??
             "https://api.minimax.io",
+        },
+      },
+      stockPhoto: {
+        pexels: {
+          apiKey: config.providers?.stockPhoto?.pexels?.apiKey ?? "",
+          apiHost: config.providers?.stockPhoto?.pexels?.apiHost ??
+            "https://api.pexels.com",
         },
       },
       publish: {

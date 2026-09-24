@@ -179,7 +179,7 @@ features: {
 | 文章数据源              | `features.article.sources`                                                                         | URL 列表，可用抓取分组前缀                                                                           |
 | 抓取供应商              | `providers.fetch.*`                                                                                | FireCrawl、Twitter/X、Xquik、Jina、Brave、Tavily、Exa、Serper、NewsAPI、RSS；GDELT/HN/arXiv 无需 Key |
 | 封面生图                | `features.article.cover`, `providers.image.dashscope/minimax.apiKey`                               | 支持阿里云图片生成和 MiniMax，失败时使用兜底封面                                                     |
-| 正文 AI 智能配图        | `features.article.bodyImages`, `providers.image.dashscope/minimax.apiKey`                          | 按文章内容生成正文配图，失败时回退已有图片                                                           |
+| Pexels 正文配图         | `features.article.bodyImages`, `providers.stockPhoto.pexels.apiKey`                                | 原文图优先，缺图时检索 Pexels 真实摄影图片，并保留摄影师与平台署名                                   |
 | 发布前质量门禁          | `features.article.qualityGate`                                                                     | 只保护真实发布，dry-run 永远继续产出                                                                 |
 | 文章向量去重            | `features.article.deduplication`, `providers.vector.embedding.*`, `storage.vector.*`               | 本地/Docker 用 SQLite，Cloudflare 用 D1                                                              |
 | 运行看板和产物          | `storage.artifacts`, `storage.runState`                                                            | 本地写文件，Cloudflare 使用 R2/KV/D1                                                                 |
@@ -415,46 +415,29 @@ features: {
 
 封面生成失败不会中断主流程，会回退默认封面。
 
-### 5. 开启正文 AI 智能配图
+### 5. 开启 Pexels 正文配图
 
 ```ts
 providers: {
-  image: { dashscope: { apiKey: "your_dashscope_key" } },
+  stockPhoto: {
+    pexels: { apiKey: "your-pexels-api-key" },
+  },
 },
 features: {
   article: {
     bodyImages: {
       mode: "missing",
-      provider: "dashscope",
-      model: "qwen-image-2.0",
       count: 1,
-      size: "1024*1024",
     },
   },
 },
 ```
 
-MiniMax 正文配图写法：
+`mode: "off"` 时只保留原文图片；`mode: "missing"` 时原文缺图才调用 Pexels
+官方搜索接口。检索失败会跳过该章节图片，不会回退 AI 生图。
 
-```ts
-providers: {
-  image: { minimax: { apiKey: "your_minimax_key" } },
-},
-features: {
-  article: {
-    bodyImages: {
-      mode: "missing",
-      provider: "minimax",
-      model: "image-01",
-      count: 1,
-      size: "1024*1024",
-    },
-  },
-},
-```
-
-默认只在文章没有抓取到原文 `media` 图片时生成正文配图。生成失败不会中断发布，
-会回退到已有 media 图片布局。
+默认只在文章没有可用且未重复的原文 `media` 图片时检索 Pexels。检索失败不会
+中断发布，该章节将不插入图片。
 
 ### 6. 开启文章去重
 
@@ -610,7 +593,7 @@ Axiom 需要先创建 dataset 和带 ingest 权限的 API token。Better Stack L
 ## 提示词风格
 
 `features.article.renderer.promptProfile`
-控制同一条微信文章链路里的排序、摘要、标题、动态模板和 AI 配图口径。默认值是
+控制同一条微信文章链路里的排序、摘要、标题、动态模板和图库检索口径。默认值是
 `technology`，适合 AI 科技资讯。
 
 可选值：

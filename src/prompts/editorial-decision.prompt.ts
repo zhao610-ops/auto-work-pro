@@ -36,7 +36,8 @@ ${newsroomStyle}
 8. 职业成长主题必须与上述岗位能力直接相关，泛职场内容不得作为主线。
 9. lead 必须是 eligibleForLead=true 的主题；若没有合格主题，明确选择 watch，不得拼凑低质量主线。
 10. 正文必须优先产出“结论、证据、抓手”，而不是泛泛叙事或心灵鸡汤。
-11. 输出必须是 JSON，不要 Markdown、代码围栏或 <think>。
+11. sourceJudgements 中标为 primary 的每一篇，都会直接进入正文候选池：它们必须与 lead 共享同一主体、同一事件，或形成可在原文中说明的直接业务因果链。仅共享“经济、成本、进口、AI”等宽泛关键词不算相关；不确定就标 supporting 或 reference-only。
+12. 输出必须是 JSON，不要 Markdown、代码围栏或 <think>。
 
 JSON 结构必须是：
 {
@@ -80,6 +81,7 @@ export function getEditorialDecisionUserPrompt(
 - skippedTopics 必须解释为什么不写，常见原因包括重复、证据不足、风险高、读者价值弱、同质化高。
 - duplicationRisk 必须参考近期文章和人工反馈。
 - sourceJudgements 只评价本次候选文章 URL，不评价无关来源。
+- sourceJudgements 的 primary 只保留准备写进正文的直接证据，最多 3 篇；supporting、reference-only 和 avoid 都不会进入正文。不要把主题簇内的所有文章默认设为 primary。
 - recommendedFormat 要和素材形态匹配，不要默认日报。
 - writingDirectives 要可执行，例如“先解释变化，再讲对开发者的影响”，不要写空泛原则。
 - titleWarnings 要吸收人工反馈，比如“避免标题太泛”“不要夸大成行业转折”“不要固定 AI 速递标题”。 

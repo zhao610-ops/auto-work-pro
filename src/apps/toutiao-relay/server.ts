@@ -53,6 +53,13 @@ Deno.serve({ port: config.port }, async (request) => {
       return ok(await session.saveDraft(payload));
     }
 
+    if (request.method === "DELETE" && url.pathname === "/api/toutiao/drafts") {
+      return ok(await session.deleteDraft({
+        idempotencyKey: url.searchParams.get("idempotencyKey") ?? undefined,
+        title: url.searchParams.get("title") ?? undefined,
+      }));
+    }
+
     if (
       request.method === "POST" && url.pathname === "/api/toutiao/publish"
     ) {

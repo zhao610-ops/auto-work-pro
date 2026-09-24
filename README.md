@@ -45,7 +45,8 @@ TrendPublish 的设计目标就是把这些步骤变成一条清晰的自动化�
 - **证据链与补充搜索**：可以用搜索型数据源补全上下文，把选题依据和风险写进运行产物。
 - **微信友好渲染**：内置多套公众号模板，支持 `dynamic` 动态排版，所有 HTML
   都会做微信兼容清洗。
-- **AI 配图**：支持阿里云图片生成和 MiniMax 图片生成，可用于封面图和正文配图。
+- **文章配图**：封面支持阿里云或 MiniMax 生图；正文优先原文图，缺图时检索 Pexels
+  真实摄影图片。
 - **可观察工作流**：Dashboard
   可查看运行列表、步骤时间线、错误解释、质量报告、HTML/JSON/图片产物。
 - **多公众号矩阵运营**：relay 负责安全代理多个公众号，Dashboard
@@ -211,21 +212,19 @@ TrendPublish 的配置分成三层：
 - `storage.runtimeConfig`：保存 Dashboard 可编辑的运行时业务配置。本地/Docker 用
   SQLite，Cloudflare 用 D1；密钥不会写入数据库。
 
-例如，开启正文 AI 配图时：
+例如，开启 Pexels 正文配图时：
 
 ```ts
 providers: {
-  image: {
-    dashscope: { apiKey: "your-dashscope-api-key" },
+  stockPhoto: {
+    pexels: { apiKey: "your-pexels-api-key" },
   },
 },
 features: {
   article: {
     bodyImages: {
       mode: "missing",
-      provider: "dashscope",
       count: 1,
-      size: "1024*1024",
     },
   },
 },
@@ -242,7 +241,7 @@ features: {
 | 配置数据源     | `features.article.sources`                | 直接写 URL，也可以用 `group:url` 指定抓取分组                                |
 | 配置抓取策略   | `fetchGroups`                             | 分组内 provider 按顺序 fallback                                              |
 | 开启封面生图   | `features.article.cover`                  | 支持 `dashscope` / `minimax`，需要对应 `providers.image.*.apiKey`            |
-| 开启正文配图   | `features.article.bodyImages`             | 失败时回退已有原文图片布局                                                   |
+| 开启正文配图   | `features.article.bodyImages`             | 原文图优先，缺图时检索 Pexels；需要 `PEXELS_API_KEY`                         |
 | 开启向量去重   | `features.article.deduplication`          | 需要 embedding provider；本地/Docker 用 SQLite，Cloudflare 用 D1             |
 | 开启通知       | `features.article.notifications.channels` | 支持 Bark、钉钉、飞书                                                        |
 | 页面改配置     | `storage.runtimeConfig`                   | Dashboard 保存 Profile、数据源、抓取分组和定时规则，下一次运行生效           |

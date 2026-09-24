@@ -86,10 +86,10 @@ export function createDashboardConfigSummary(
       },
       bodyImages: {
         mode: article.bodyImages.mode,
-        provider: article.bodyImages.provider,
-        model: article.bodyImages.model,
+        provider: "pexels",
+        model: "",
         count: article.bodyImages.count,
-        size: article.bodyImages.size,
+        size: "landscape",
       },
       deduplication: {
         enabled: article.deduplication.enabled,

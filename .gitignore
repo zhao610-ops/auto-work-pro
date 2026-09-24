@@ -63,3 +63,6 @@ tmp/
 *.db
 
 data/toutiao/browser-data/
+data/toutiao/article-records.json
+data/toutiao/screenshots/
+trendFinder

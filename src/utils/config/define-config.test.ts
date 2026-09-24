@@ -29,6 +29,11 @@ Deno.test("resolveTrendPublishConfig returns typed resolved config", () => {
           apiHost: "https://api.minimax.io",
         },
       },
+      stockPhoto: {
+        pexels: {
+          apiKey: "pexels-key",
+        },
+      },
       notify: {
         bark: { url: "https://example.com/bark" },
         dingtalk: { webhook: "https://example.com/dingtalk" },
@@ -111,6 +116,7 @@ Deno.test("resolveTrendPublishConfig returns typed resolved config", () => {
   assertEquals(config.providers.fetch.twitter.xquikApiKey, "xquik-key");
   assertEquals(config.providers.image.dashscope.apiKey, "dashscope-key");
   assertEquals(config.providers.image.minimax.apiKey, "minimax-key");
+  assertEquals(config.providers.stockPhoto.pexels.apiKey, "pexels-key");
   assertEquals(config.features.article.bodyImages.mode, "missing");
   assertEquals(config.features.article.bodyImages.provider, "minimax");
   assertEquals(config.features.article.bodyImages.model, "image-01");

@@ -167,11 +167,17 @@ function getQualityBlockReason(
     }
   }
 
-  if (!review.allowPublish) {
+  // 定时自动群发以最低质量分为主判定。审稿模型的 dry-run-only
+  // 仅表示它偏向保守处理，不能覆盖已达到发布阈值的文章。
+  // revise、block 以及前面的硬风险判断仍保持拦截，避免放行明确待修或违规内容。
+  if (!review.allowPublish && review.recommendedAction !== "dry-run-only") {
     return `审稿结论不允许发布: ${review.recommendedAction}`;
   }
 
-  if (review.recommendedAction !== "publish") {
+  if (
+    review.recommendedAction !== "publish" &&
+    review.recommendedAction !== "dry-run-only"
+  ) {
     return `审稿建议为 ${review.recommendedAction}`;
   }
 

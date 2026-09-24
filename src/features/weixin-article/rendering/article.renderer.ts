@@ -51,10 +51,6 @@ export class WeixinArticleTemplateRenderer
     this.uploadContentImages = enabled;
   }
 
-  public setGenerateContentImages(enabled: boolean): void {
-    this.imageLayoutService.setGeneratedImageEnabled?.(enabled);
-  }
-
   public override render(
     data: WeixinTemplate[],
     templateType?: string,

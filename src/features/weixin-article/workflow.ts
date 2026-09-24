@@ -132,7 +132,6 @@ export class WeixinArticleWorkflow {
         `[工作流开始] 开始执行微信工作流, 当前工作流实例ID: ${this.env.id} 触发事件ID: ${event.id}, runId: ${runId}`,
       );
       this.dependencies.renderService.setUploadContentImages(!dryRun);
-      this.dependencies.renderService.setGenerateContentImages(!dryRun);
 
       if (this.dependencies.config.runtimeConfigSnapshot) {
         await this.runTrackedStep(
@@ -862,6 +861,28 @@ export class WeixinArticleWorkflow {
         issue.category === "fact" &&
         (issue.severity === "high" || issue.severity === "blocker")
       );
+      if (shouldSkipLeadTopic(finalReview)) {
+        await this.dependencies.runtime.editorialMemoryStore.saveTopicFeedback({
+          runId,
+          topicId: editorialDecision.leadTopicId,
+          profileId: this.dependencies.config.profileId,
+          accountId: this.dependencies.config.accountId,
+          action: "skip",
+          title: editorialDecision.leadTopicTitle,
+          reason: `结构性质量失败：${
+            finalReview.issues.filter((issue) =>
+              issue.category === "structure" || issue.category === "fact"
+            ).map((issue) => issue.message).slice(0, 2).join("；") ||
+            finalReview.summary
+          }`,
+        }).catch((error) =>
+          logger.warn(
+            `[编辑记忆] 主线跳过标记失败: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          )
+        );
+      }
       if (
         this.dependencies.config.qualityGate.blockOnHighFactIssue &&
         highRiskFactIssues.length > 0
@@ -1370,6 +1391,14 @@ function qualityActionRank(
     case "publish":
       return 3;
   }
+}
+
+/** 结构偏题、证据事实高危时，后续补生成必须换主线而非继续润色同一选题。 */
+function shouldSkipLeadTopic(review: ArticleQualityReview): boolean {
+  return review.issues.some((issue) =>
+    (issue.category === "structure" || issue.category === "fact") &&
+    (issue.severity === "high" || issue.severity === "blocker")
+  );
 }
 
 function formatPublishSummary(result: PublishResult, dryRun: boolean): string {

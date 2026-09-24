@@ -8,7 +8,6 @@ export interface WeixinArticleRenderContext {
 
 export interface WeixinArticleRenderer {
   setUploadContentImages(enabled: boolean): void;
-  setGenerateContentImages?(enabled: boolean): void;
   render(
     templateData: WeixinTemplate[],
     context?: WeixinArticleRenderContext,
@@ -20,10 +19,6 @@ export class WeixinArticleRenderService {
 
   public setUploadContentImages(enabled: boolean): void {
     this.renderer.setUploadContentImages(enabled);
-  }
-
-  public setGenerateContentImages(enabled: boolean): void {
-    this.renderer.setGenerateContentImages?.(enabled);
   }
 
   public toTemplateData(

@@ -749,7 +749,7 @@ function ensureThreeContentSections(
   }];
 }
 
-/** 每个内容块固定一个图片插槽；来源图优先，缺失时由后续图片服务补图。 */
+/** 每个内容块固定一个图片插槽；来源图优先，缺失时由 Pexels 检索服务补图。 */
 function createThreeContentImagePlan(
   sections: ArticlePlanSection[],
 ): ArticleBodyImagePlan {
@@ -758,7 +758,8 @@ function createThreeContentImagePlan(
     placements: sections.map((section, index) => ({
       sectionId: section.id,
       purpose: `为第 ${index + 1} 条内容提供与事实主体直接相关的正文配图。`,
-      promptHint: `${section.title}：优先呈现相关人物、产品、场景或实体对象。`,
+      promptHint:
+        `${section.title}：检索相关人物、产品、生活场景或实体对象的真实摄影图片。`,
     })),
   };
 }

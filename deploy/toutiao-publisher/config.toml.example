@@ -1,0 +1,27 @@
+[toutiao]
+base_url = "https://mp.toutiao.com"
+cookie_env = "TOUTIAO_COOKIE"
+cookie_file = "./state/toutiao-cookie.txt"
+headers_json_env = "TOUTIAO_HEADERS_JSON"
+headers_file = "./state/toutiao-headers.json"
+referer = "https://mp.toutiao.com/profile_v4/graphic/publish"
+user_agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
+timeout_seconds = 30
+aid = 1231
+upload_source = 20020003
+mp_publish_ab_val = "0"
+csrf_cookie = "passport_csrf_token"
+csrf_header = "x-tt-passport-csrf-token"
+acrawler_signer = "/opt/toutiao-publisher/upstream/acrawler_signer.mjs"
+node_binary = "node"
+chrome_protocol_enabled = true
+chrome_executable = "/usr/bin/chromium"
+chrome_profile_root = "./state/chrome-protocol-profiles"
+chrome_startup_timeout_seconds = 20
+chrome_page_timeout_seconds = 45
+chrome_security_wait_seconds = 12
+chrome_request_timeout_seconds = 60
+
+[upload]
+mode = "publish"
+report_dir = "./reports"

@@ -37,6 +37,14 @@ export class ToutiaoArticleRecordStore {
     return record;
   }
 
+  /** 平台侧确认删除草稿后，移除本地幂等映射以允许重新创建文章。 */
+  async remove(idempotencyKey: string): Promise<void> {
+    await this.load();
+    this.records.delete(idempotencyKey);
+    this.writeQueue = this.writeQueue.then(() => this.persist());
+    await this.writeQueue;
+  }
+
   private async load(): Promise<void> {
     if (this.loaded) return;
     const text = await Deno.readTextFile(this.path).catch((error) => {

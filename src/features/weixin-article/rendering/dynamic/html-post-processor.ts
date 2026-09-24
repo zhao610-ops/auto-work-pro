@@ -131,6 +131,10 @@ function convertLinksToFootnotes(
   const html = input.replace(
     /<a\b[^>]*href=(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi,
     (_match, _quote: string, href: string, text: string) => {
+      // Pexels 官方 API 要求保留平台及摄影师署名链接。
+      if (isPexelsUrl(href)) {
+        return `<a href="${escapeAttribute(href)}">${text}</a>`;
+      }
       const index = footnotes.length + 1;
       footnotes.push(href);
       return `${text}<sup style="font-size:11px;color:#888888;">[${index}]</sup>`;
@@ -138,6 +142,16 @@ function convertLinksToFootnotes(
   );
 
   return { html, footnotes };
+}
+
+function isPexelsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" &&
+      (url.hostname === "pexels.com" || url.hostname.endsWith(".pexels.com"));
+  } catch {
+    return false;
+  }
 }
 
 function appendFootnotes(input: string, footnotes: string[]): string {

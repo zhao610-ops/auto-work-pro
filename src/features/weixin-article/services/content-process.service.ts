@@ -98,9 +98,17 @@ export class WeixinArticleContentProcessService {
       topContents.push(content);
     };
 
-    for (const id of this.pickDecisionArticleIds(selection, sourceContents)) {
+    const leadArticleIds = this.pickDecisionArticleIds(
+      selection,
+      sourceContents,
+    );
+    for (const id of leadArticleIds) {
       addContent(id);
     }
+
+    // 已有编辑主线时，正文候选只能来自这条主线。不能再用全局高分内容补足
+    // maxArticles，否则后续模型仍可能将无关热点写成“成本背景”或独立章节。
+    if (leadArticleIds.length > 0) return topContents;
 
     for (const ranked of rankedContents) {
       addContent(ranked.id);
@@ -132,21 +140,19 @@ export class WeixinArticleContentProcessService {
       ids.push(id);
     };
 
-    const roleOrder = { lead: 0, supporting: 1, watch: 2 };
-    const selectedTopics = [...selection.editorialDecision.selectedTopics]
-      .sort((left, right) => roleOrder[left.role] - roleOrder[right.role]);
+    // 正文只围绕唯一主线取材；其他热点保留为下一篇候选，不能拿来凑章节。
+    const selectedTopics = selection.editorialDecision.selectedTopics
+      .filter((topic) => topic.role === "lead");
     for (const topic of selectedTopics) {
       const cluster = clusterById.get(topic.topicId);
       if (!cluster) continue;
       add(cluster.primaryArticleId);
-      for (const id of cluster.articleIds) add(id);
     }
 
     for (const judgement of selection.editorialDecision.sourceJudgements) {
-      if (
-        judgement.role !== "primary" &&
-        judgement.role !== "supporting"
-      ) continue;
+      // primary 是编辑决策明确允许进入正文的证据。主题簇只是召回结果，
+      // 其中其他文章不能因共享宽泛关键词（例如“进口”“成本”）而自动混入。
+      if (judgement.role !== "primary") continue;
       add(contentIdByUrl.get(judgement.url));
     }
 

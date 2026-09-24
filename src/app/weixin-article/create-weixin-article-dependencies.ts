@@ -25,9 +25,10 @@ import type {
   WeixinArticlePublisher,
 } from "@src/features/weixin-article/dependencies.ts";
 import {
-  AiArticleImageLayoutService,
+  PexelsArticleImageLayoutService,
   WeixinArticleImageLayoutService,
 } from "@src/features/weixin-article/services/article-image-layout.service.ts";
+import { PexelsPhotoSearch } from "@src/integrations/image/providers/pexels/pexels-photo-search.ts";
 import { WeixinArticleContentDedupService } from "@src/features/weixin-article/services/content-dedup.service.ts";
 import { WeixinArticleContentProcessService } from "@src/features/weixin-article/services/content-process.service.ts";
 import { WeixinArticleContentScrapeService } from "@src/features/weixin-article/services/content-scrape.service.ts";
@@ -100,20 +101,11 @@ export async function createWeixinArticleDependencies(
     new NoopEditorialMemoryStore();
   const articleFetchRouter = new ArticleFetchRouter(config);
   const researchSearchProviders = resolveResearchSearchProviders(config);
-  const imageLayoutService = new AiArticleImageLayoutService(
+  const imageLayoutService = new PexelsArticleImageLayoutService(
     new WeixinArticleImageLayoutService(),
-    imageGeneratorResolver,
+    new PexelsPhotoSearch(config.providers.stockPhoto.pexels),
     {
       enabled: bodyImages.mode !== "off",
-      imageCount: bodyImages.count,
-      onlyWhenNoMedia: bodyImages.mode === "missing",
-      imageSize: bodyImages.size,
-      imageModel: bodyImages.model,
-      imageGeneratorType: resolveImageGeneratorType(
-        bodyImages.provider,
-        "body",
-      ),
-      promptProfile,
     },
   );
 
@@ -157,7 +149,6 @@ export async function createWeixinArticleDependencies(
       config.features.article.cover.model,
       resolveImageGeneratorType(
         config.features.article.cover.provider,
-        "cover",
       ),
       accountBrand,
       undefined,
@@ -280,28 +271,12 @@ function resolveImageGeneratorType(
   provider: ResolvedTrendPublishConfig["features"]["article"]["cover"][
     "provider"
   ],
-  usage: "cover",
-): ImageGeneratorType.ALIYUN_POSTER | ImageGeneratorType.MINIMAX_IMAGE;
-function resolveImageGeneratorType(
-  provider: ResolvedTrendPublishConfig["features"]["article"]["bodyImages"][
-    "provider"
-  ],
-  usage: "body",
-): ImageGeneratorType.ALIYUN_IMAGE | ImageGeneratorType.MINIMAX_IMAGE;
-function resolveImageGeneratorType(
-  provider: ResolvedTrendPublishConfig["features"]["article"]["cover"][
-    "provider"
-  ],
-  usage: "cover" | "body",
 ):
   | ImageGeneratorType.ALIYUN_POSTER
-  | ImageGeneratorType.ALIYUN_IMAGE
   | ImageGeneratorType.MINIMAX_IMAGE {
   switch (provider) {
     case "dashscope":
-      return usage === "cover"
-        ? ImageGeneratorType.ALIYUN_POSTER
-        : ImageGeneratorType.ALIYUN_IMAGE;
+      return ImageGeneratorType.ALIYUN_POSTER;
     case "minimax":
       return ImageGeneratorType.MINIMAX_IMAGE;
   }

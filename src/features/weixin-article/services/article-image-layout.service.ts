@@ -3,15 +3,11 @@ import {
   ArticleImageLayoutService,
   WeixinTemplate,
 } from "@src/features/weixin-article/domain/renderable-article.ts";
-import {
-  ImageGenerator,
-  ImageGeneratorType,
-} from "@src/core/ports/image-generator.ts";
 import { Logger } from "@zilla/logger";
 import {
-  PromptProfileName,
-  resolvePromptProfile,
-} from "@src/prompts/prompt-profile.ts";
+  StockPhoto,
+  StockPhotoSearch,
+} from "@src/core/ports/stock-photo-search.ts";
 
 const logger = new Logger("weixin-article-image-layout-service");
 
@@ -20,39 +16,16 @@ export interface ArticleImageLayoutOptions {
   imageAlt?: string;
 }
 
-interface AiImageGeneratorResolver {
-  getGenerator(
-    type: ImageGeneratorType.ALIYUN_IMAGE | ImageGeneratorType.MINIMAX_IMAGE,
-    needRefresh?: boolean,
-  ): Promise<ImageGenerator<AiBodyImageRequest, string>>;
-}
-
-interface AiBodyImageRequest {
-  prompt: string;
-  size?: string;
-  model?: string;
-}
-
-interface AiImageLayoutConfig {
+interface PexelsImageLayoutConfig {
   enabled: boolean;
-  imageCount: number;
-  onlyWhenNoMedia: boolean;
-  imageSize: string;
-  imageModel?: string;
-  imageGeneratorType:
-    | ImageGeneratorType.ALIYUN_IMAGE
-    | ImageGeneratorType.MINIMAX_IMAGE;
-  promptProfile?: PromptProfileName;
+  locale: string;
+  perPage: number;
 }
 
-const DEFAULT_AI_IMAGE_LAYOUT_CONFIG: AiImageLayoutConfig = {
+const DEFAULT_PEXELS_IMAGE_LAYOUT_CONFIG: PexelsImageLayoutConfig = {
   enabled: false,
-  imageCount: 1,
-  onlyWhenNoMedia: false,
-  imageSize: "1024*1024",
-  imageModel: "qwen-image-2.0",
-  imageGeneratorType: ImageGeneratorType.ALIYUN_IMAGE,
-  promptProfile: "technology",
+  locale: "zh-CN",
+  perPage: 15,
 };
 
 /**
@@ -76,18 +49,25 @@ export class WeixinArticleImageLayoutService
   }
 
   async layoutArticles(articles: WeixinTemplate[]): Promise<WeixinTemplate[]> {
-    return articles.map((article) => this.layoutExistingMedia(article));
+    const usedMediaUrls = new Set<string>();
+    return articles.map((article) =>
+      this.layoutExistingMedia(article, usedMediaUrls)
+    );
   }
 
   async layoutArticle(article: WeixinTemplate): Promise<WeixinTemplate> {
     return this.layoutExistingMedia(article);
   }
 
-  layoutExistingMedia(article: WeixinTemplate): WeixinTemplate {
-    const mediaUrl = this.getPrimaryMediaUrl(article.media);
+  layoutExistingMedia(
+    article: WeixinTemplate,
+    usedMediaUrls = new Set<string>(),
+  ): WeixinTemplate {
+    const mediaUrl = this.getUnusedMediaUrl(article.media, usedMediaUrls);
     if (!mediaUrl) {
       return article;
     }
+    usedMediaUrls.add(normalizeMediaUrl(mediaUrl));
 
     const paragraphs = article.content.split(this.paragraphSeparator);
     let content = "";
@@ -110,13 +90,24 @@ export class WeixinArticleImageLayoutService
     };
   }
 
-  private getPrimaryMediaUrl(media?: Media[]): string | undefined {
+  hasUnusedMedia(
+    article: WeixinTemplate,
+    usedMediaUrls: ReadonlySet<string>,
+  ): boolean {
+    return Boolean(this.getUnusedMediaUrl(article.media, usedMediaUrls));
+  }
+
+  private getUnusedMediaUrl(
+    media: Media[] | undefined,
+    usedMediaUrls: ReadonlySet<string>,
+  ): string | undefined {
     if (!media?.length) {
       return undefined;
     }
     for (const item of media) {
-      if (item.url?.trim()) {
-        return item.url.trim();
+      const url = item.url?.trim();
+      if (url && !usedMediaUrls.has(normalizeMediaUrl(url))) {
+        return url;
       }
     }
     return undefined;
@@ -129,151 +120,158 @@ export class WeixinArticleImageLayoutService
   }
 }
 
-export class AiArticleImageLayoutService implements ArticleImageLayoutService {
-  private generatedImageEnabled = true;
-  private readonly config: AiImageLayoutConfig;
+export class PexelsArticleImageLayoutService
+  implements ArticleImageLayoutService {
+  private readonly config: PexelsImageLayoutConfig;
 
   constructor(
     private fallbackLayoutService = new WeixinArticleImageLayoutService(),
-    private imageGeneratorResolver: AiImageGeneratorResolver,
-    config: Partial<AiImageLayoutConfig> = {},
+    private photoSearch: StockPhotoSearch,
+    config: Partial<PexelsImageLayoutConfig> = {},
   ) {
-    this.config = { ...DEFAULT_AI_IMAGE_LAYOUT_CONFIG, ...config };
-  }
-
-  setGeneratedImageEnabled(enabled: boolean): void {
-    this.generatedImageEnabled = enabled;
+    this.config = { ...DEFAULT_PEXELS_IMAGE_LAYOUT_CONFIG, ...config };
   }
 
   async layoutArticles(articles: WeixinTemplate[]): Promise<WeixinTemplate[]> {
-    if (!await this.isEnabled()) {
+    if (!this.isEnabled()) {
       return await this.fallbackLayoutService.layoutArticles(articles);
     }
 
-    return await Promise.all(
-      articles.map((article) => this.layoutArticle(article)),
-    );
+    const usedMediaUrls = new Set<string>();
+    const result: WeixinTemplate[] = [];
+    for (const article of articles) {
+      result.push(
+        await this.layoutArticleWithUsedMedia(article, usedMediaUrls),
+      );
+    }
+    return result;
   }
 
   async layoutArticle(article: WeixinTemplate): Promise<WeixinTemplate> {
-    if (!await this.isEnabled()) {
+    if (!this.isEnabled()) {
       return await this.fallbackLayoutService.layoutArticle(article);
+    }
+
+    return await this.layoutArticleWithUsedMedia(article, new Set<string>());
+  }
+
+  private async layoutArticleWithUsedMedia(
+    article: WeixinTemplate,
+    usedMediaUrls: Set<string>,
+  ): Promise<WeixinTemplate> {
+    if (this.fallbackLayoutService.hasUnusedMedia(article, usedMediaUrls)) {
+      return this.fallbackLayoutService.layoutExistingMedia(
+        article,
+        usedMediaUrls,
+      );
     }
 
     try {
-      const articleWithGeneratedImages = await this.generateArticleImages(
+      const photo = await this.findUnusedPhoto(article, usedMediaUrls);
+      if (!photo) {
+        logger.warn(
+          `[Pexels正文配图] 未找到相关图片，跳过章节: ${article.title}`,
+        );
+        return article;
+      }
+      usedMediaUrls.add(normalizeMediaUrl(photo.imageUrl));
+      return insertAfterFirstParagraph(
         article,
-      );
-      return await this.fallbackLayoutService.layoutArticle(
-        articleWithGeneratedImages,
+        this.buildPexelsImageHtml(article, photo),
+        "<next_paragraph />",
       );
     } catch (error) {
       logger.warn(
-        `[AI正文配图] 生成失败，回退已有图片布局: ${
+        `[Pexels正文配图] 检索失败，跳过章节配图: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
-      return await this.fallbackLayoutService.layoutArticle(article);
+      return article;
     }
   }
 
-  private async generateArticleImages(
+  private async findUnusedPhoto(
     article: WeixinTemplate,
-  ): Promise<WeixinTemplate> {
-    const onlyWhenNoMedia = await this.getOnlyWhenNoMedia();
-    if (onlyWhenNoMedia && article.media?.length) {
-      return article;
-    }
-
-    const imageCount = await this.getImageCount();
-    if (imageCount <= 0) {
-      return article;
-    }
-
-    const generator = await this.imageGeneratorResolver.getGenerator(
-      this.config.imageGeneratorType,
-    );
-    const generatedMedia: Media[] = [];
-
-    for (let index = 0; index < imageCount; index++) {
-      const url = await generator.generate({
-        prompt: this.buildImagePrompt(article, index),
-        size: await this.getImageSize(),
-        model: await this.getImageModel(),
+    usedMediaUrls: ReadonlySet<string>,
+  ): Promise<StockPhoto | undefined> {
+    for (const query of buildPexelsQueries(article)) {
+      const photos = await this.photoSearch.search({
+        query,
+        locale: this.config.locale,
+        orientation: "landscape",
+        perPage: this.config.perPage,
       });
-      if (typeof url !== "string") {
-        throw new Error("正文配图生成结果不是图片 URL");
+      const photo = photos.find((item) =>
+        !usedMediaUrls.has(normalizeMediaUrl(item.imageUrl))
+      );
+      if (photo) {
+        return photo;
       }
-      generatedMedia.push({
-        url,
-        type: "image",
-        size: this.parseImageSize(await this.getImageSize()),
-      });
     }
-
-    return { ...article, media: [...(article.media ?? []), ...generatedMedia] };
+    return undefined;
   }
 
-  private async isEnabled(): Promise<boolean> {
-    return this.generatedImageEnabled && this.config.enabled;
+  private buildPexelsImageHtml(
+    article: WeixinTemplate,
+    photo: StockPhoto,
+  ): string {
+    const image = `<img src="${escapeHtmlAttribute(photo.imageUrl)}" alt="${
+      escapeHtmlAttribute(`${article.title}相关配图`)
+    }" />`;
+    const credit =
+      `<p style="margin:6px 0 18px;color:#999999;font-size:11px;line-height:1.6;text-align:center;">图片：<a href="${
+        escapeHtmlAttribute(photo.photographerUrl)
+      }">${escapeHtmlText(photo.photographer)}</a> / <a href="${
+        escapeHtmlAttribute(photo.pageUrl)
+      }">Pexels</a></p>`;
+    return `${image}${credit}`;
   }
 
-  private async getImageCount(): Promise<number> {
-    const value = this.config.imageCount;
-    const count = Number(value);
-    if (!Number.isFinite(count)) {
-      return 1;
-    }
-    return Math.max(0, Math.min(Math.floor(count), 3));
+  private isEnabled(): boolean {
+    return this.config.enabled;
   }
+}
 
-  private async getOnlyWhenNoMedia(): Promise<boolean> {
-    return this.config.onlyWhenNoMedia;
-  }
+function insertAfterFirstParagraph(
+  article: WeixinTemplate,
+  imageHtml: string,
+  paragraphSeparator: string,
+): WeixinTemplate {
+  const paragraphs = article.content.split(paragraphSeparator);
+  const [first = "", ...rest] = paragraphs;
+  return {
+    ...article,
+    content: [first, imageHtml, ...rest].join(paragraphSeparator),
+  };
+}
 
-  private async getImageSize(): Promise<string> {
-    return this.config.imageSize;
-  }
-
-  private async getImageModel(): Promise<string | undefined> {
-    return this.config.imageModel;
-  }
-
-  private buildImagePrompt(article: WeixinTemplate, index: number): string {
-    const profile = resolvePromptProfile(this.config.promptProfile);
-    const content = stripHtml(article.content)
-      .replace(/<next_paragraph \/>/g, "\n")
-      .slice(0, 600);
-    return [
-      `为中文微信公众号“${profile.label}”文章生成一张正文配图。`,
-      "画面方向：真实新闻摄影或商业纪实摄影，不要插画、3D 渲染、赛博朋克或广告海报。",
-      "画面主体必须是该段落涉及的人、产品、设备、门店、工厂或事件现场，不要抽象科技背景。",
-      "不要生成封面标题、文字、Logo、水印、二维码；不得模仿真实新闻照片或公众人物肖像。",
-      `视觉要求：${profile.imageGuidance}`,
-      "避免：水印、Logo、二维码、可识别人物脸部、夸张赛博朋克、过度蓝紫渐变、廉价股票素材感。",
-      "构图：适合放在公众号正文段落之间，主体明确，留有呼吸感，横竖构图均衡。",
-      `文章标题：${article.title}`,
-      `文章摘要：${content}`,
-      `图片序号：${index + 1}`,
-    ].join("\n");
-  }
-
-  private parseImageSize(size: string): { width: number; height: number } {
-    const match = size.match(/^(\d+)\*(\d+)$/);
-    if (!match) {
-      return { width: 1024, height: 1024 };
-    }
-    return {
-      width: Number(match[1]),
-      height: Number(match[2]),
-    };
-  }
+function buildPexelsQueries(article: WeixinTemplate): string[] {
+  const title = stripHtml(article.title).replace(/[《》【】「」“”]/g, " ");
+  const keywords = article.keywords
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 5)
+    .join(" ");
+  return [...new Set([title, keywords])]
+    .map((item) => item.replace(/\s+/g, " ").trim().slice(0, 120))
+    .filter(Boolean);
 }
 
 function escapeHtmlAttribute(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function normalizeMediaUrl(url: string): string {
+  return url.trim();
+}
+
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }

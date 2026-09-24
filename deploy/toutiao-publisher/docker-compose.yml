@@ -1,0 +1,46 @@
+services:
+  toutiao-dashboard:
+    build:
+      context: ../..
+      dockerfile: deploy/toutiao-publisher/Dockerfile
+      network: host
+    container_name: toutiao-dashboard
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        ln -sfn /opt/toutiao-publisher/upstream/web /data/web &&
+        exec python3 /opt/toutiao-publisher/upstream/dashboard.py
+        --config /data/config.toml --host 0.0.0.0 --port 8765
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - /root/toutiao-publisher/data:/data
+
+  toutiao-publisher:
+    build:
+      context: ../..
+      dockerfile: deploy/toutiao-publisher/Dockerfile
+      network: host
+    container_name: toutiao-publisher
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      HOME: /data/state/chrome-home
+      XDG_CONFIG_HOME: /data/state/chrome-home/.config
+      TOUTIAO_SOURCE_RUNS_DIR: /input/runs
+      TOUTIAO_OUTBOX_DIR: /data/outbox
+      TOUTIAO_STATE_DIR: /data/state
+      TOUTIAO_CONFIG: /data/config.toml
+      TOUTIAO_SCHEDULE_TIME: "11:00"
+      TOUTIAO_POLL_SECONDS: "60"
+      TOUTIAO_MAX_ARTICLE_AGE_MINUTES: "720"
+      # 仅在面板账号会话已验证后开启；发布器额外保证每天最多成功发布一次。
+      TOUTIAO_PUBLISH_ENABLED: "true"
+    env_file:
+      - .env
+    volumes:
+      - /root/trendpublish/data/temp/runs:/input/runs:ro
+      - /root/toutiao-publisher/data:/data

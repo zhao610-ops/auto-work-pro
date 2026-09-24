@@ -46,6 +46,39 @@ Deno.test("processTopRanked prioritizes editorial decision articles before gener
   ]);
 });
 
+Deno.test("processTopRanked 有主线时不以无关高分内容补足候选", async () => {
+  const service = new WeixinArticleContentProcessService(
+    new EchoSummarizer(),
+    new NoopNotifier(),
+    4,
+  );
+  const contents = [
+    createContent("google-1", "Google I/O 主线", "https://google.test/1"),
+    createContent("hf-1", "无关高分热点", "https://hf.test/1"),
+  ];
+
+  const result = await service.processTopRanked(
+    [
+      { id: "hf-1", score: 98 },
+      { id: "google-1", score: 45 },
+    ],
+    contents,
+    4,
+    {
+      topicReport: {
+        ...createTopicReport(),
+        clusters: [{
+          ...createTopicReport().clusters[0],
+          articleIds: ["google-1", "hf-1"],
+        }],
+      },
+      editorialDecision: createEditorialDecision(),
+    },
+  );
+
+  assertEquals(result.map((item) => item.id), ["google-1"]);
+});
+
 Deno.test("processTopRanked hydrates selected content before summarizing", async () => {
   const service = new WeixinArticleContentProcessService(
     new EchoSummarizer(),
@@ -132,7 +165,18 @@ function createEditorialDecision(): EditorialDecision {
       reason: "无重复",
       avoidAngles: [],
     },
-    sourceJudgements: [],
+    sourceJudgements: [
+      {
+        url: "https://google.test/1",
+        role: "primary",
+        reason: "Google I/O 主线的直接事实来源",
+      },
+      {
+        url: "https://google.test/2",
+        role: "primary",
+        reason: "Google I/O 主线的交叉来源",
+      },
+    ],
     recommendedFormat: "deep-analysis",
     writingDirectives: [],
     titleWarnings: [],

@@ -10,9 +10,16 @@ import {
   assertPublishCoverProvided,
 } from "./publication-preflight.ts";
 import { ToutiaoArticleRecordStore } from "./article-record-store.ts";
-import { findMatchingDraft, type RemoteArticle } from "./reconciliation.ts";
+import {
+  type ArticleMatchCriteria,
+  createContentFingerprint,
+  findMatchingDraft,
+  findMatchingManagedContent,
+  type RemoteArticle,
+} from "./reconciliation.ts";
 import type {
   ToutiaoArticleRecord,
+  ToutiaoDeleteDraftResult,
   ToutiaoDraftRequest,
   ToutiaoDraftResult,
   ToutiaoPublishRequest,
@@ -177,6 +184,8 @@ export class ToutiaoBrowserSession {
         article = { title: existing.title, coverUploaded: true };
         record = await this.records.upsert({
           ...existing,
+          contentFingerprint: existing.contentFingerprint ??
+            await requestContentFingerprint(request),
           coverUploaded: true,
           updatedAt: new Date().toISOString(),
         });
@@ -186,33 +195,47 @@ export class ToutiaoBrowserSession {
           ...request,
           coverImagePath: coverPath,
         });
-        await saveDraft(page);
-
-        // 先在草稿列表获取真实 ID，再确认定时；即使最后一步网络超时，也可安全反查。
-        record = await this.persistReconciledRecord({
-          request,
-          status: "draft",
-        });
-        if (record) {
+        // 正式发布不等待“草稿已保存”提示：正文和封面已完成页面回读，
+        // 随即进入预览发布。先写入待反查记录，若发布页面超时则阻止
+        // 同一幂等键重复创建内容。
+        if (request.idempotencyKey) {
+          const now = new Date().toISOString();
           record = await this.records.upsert({
-            ...record,
+            idempotencyKey: request.idempotencyKey,
+            title: article.title,
+            status: "pending_reconciliation",
+            createdAt: now,
+            updatedAt: now,
+            reconciledAt: now,
+            contentFingerprint: await requestContentFingerprint(request),
             contentVerified: true,
             coverUploaded: article.coverUploaded,
-            updatedAt: new Date().toISOString(),
           });
         }
       }
 
       await publishImmediately(page);
-      // 页面确认发布后立即反查，取得作品 ID。列表短暂延迟时仍以成功确认作为终态，
-      // 后续调度心跳会再次反查并补齐 articleId。
-      const remote = await findManagedContentByTitle(page, article.title);
+      // 页面 Toast 只是前端状态；必须由作品管理接口轮询确认，才允许写成“已发布”。
+      const remote = await waitForPublishedContent(page, {
+        title: article.title,
+        contentFingerprint: record?.contentFingerprint,
+        createdAt: record?.createdAt,
+      });
+      if (!remote) {
+        throw new ToutiaoRelayError(
+          "PUBLISH_CONFIRM_FAILED",
+          "已点击最终发布，但作品管理接口在轮询窗口内未确认该文章已发布；任务保留为待反查，禁止重复发布。",
+        );
+      }
       const publishedRecord = record && request.idempotencyKey
         ? await this.records.upsert({
           ...record,
-          articleId: remote?.articleId ?? record.articleId,
+          articleId: remote.articleId,
           status: "published",
-          currentUrl: remote?.currentUrl ?? page.url(),
+          currentUrl: remote.currentUrl,
+          editUrl: remote.editUrl ?? record.editUrl,
+          platformCreatedAt: remote.platformCreatedAt ??
+            record.platformCreatedAt,
           updatedAt: new Date().toISOString(),
           reconciledAt: new Date().toISOString(),
         })
@@ -237,6 +260,18 @@ export class ToutiaoBrowserSession {
         "publish-error",
       )
         .catch(() => undefined);
+      const visibleButtons = await page.locator("button").evaluateAll((
+        elements,
+      ) =>
+        elements.filter((element) => {
+          const rect = (element as HTMLElement).getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        }).slice(-12).map((element) => ({
+          text: (element.textContent ?? "").trim().slice(0, 50),
+          className: element.getAttribute("class") ?? "",
+          disabled: (element as HTMLButtonElement).disabled,
+        }))
+      ).catch(() => []);
       const relayError = error instanceof ToutiaoRelayError
         ? error
         : new ToutiaoRelayError(
@@ -251,6 +286,7 @@ export class ToutiaoBrowserSession {
         {
           ...relayError.details,
           ...(screenshotPath ? { screenshotPath } : {}),
+          visibleButtons: JSON.stringify(visibleButtons),
         },
       );
     } finally {
@@ -261,6 +297,168 @@ export class ToutiaoBrowserSession {
   async close(): Promise<void> {
     await this.context?.close().catch(() => {});
     this.context = undefined;
+  }
+
+  /** 仅删除真实草稿 ID 和精确标题均匹配的草稿。 */
+  async deleteDraft(input: {
+    idempotencyKey?: string;
+    title?: string;
+  }): Promise<ToutiaoDeleteDraftResult> {
+    const record = input.idempotencyKey
+      ? await this.records.get(input.idempotencyKey)
+      : input.title
+      ? await this.records.findByTitle(input.title.trim())
+      : undefined;
+    if (!record?.articleId) {
+      throw new ToutiaoRelayError(
+        "RECONCILE_NOT_FOUND",
+        "没有找到带真实草稿 ID 的头条草稿，拒绝删除。",
+      );
+    }
+    if (input.title?.trim() && input.title.trim() !== record.title) {
+      throw new ToutiaoRelayError(
+        "IDEMPOTENCY_CONFLICT",
+        "草稿标题与指定标题不一致，拒绝删除。",
+      );
+    }
+    const page = await this.newPage();
+    try {
+      const session = await this.checkLoginStatus(page);
+      if (!session.loggedIn) {
+        throw new ToutiaoRelayError(
+          "AUTH_EXPIRED",
+          "今日头条账号未登录，无法删除草稿。",
+        );
+      }
+      await page.goto(`${DRAFT_LIST_URL}?delete=${Date.now()}`, {
+        waitUntil: "domcontentloaded",
+        timeout: 30_000,
+      });
+      await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(
+        () => {},
+      );
+      await page.waitForTimeout(1_500);
+      const item = page.locator(".article-draft-item").filter({
+        hasText: record.title,
+      }).first();
+      if (!await item.isVisible().catch(() => false)) {
+        throw new ToutiaoRelayError(
+          "RECONCILE_NOT_FOUND",
+          "草稿列表中未找到指定标题，拒绝删除。",
+        );
+      }
+      const mutationResponses: string[] = [];
+      const collectMutation = (
+        response: {
+          url(): string;
+          status(): number;
+          request(): { method(): string };
+        },
+      ) => {
+        const method = response.request().method();
+        if (
+          method === "GET" || !/(draft|article|content)/i.test(response.url())
+        ) return;
+        const path = new URL(response.url()).pathname;
+        mutationResponses.push(`${method} ${path} ${response.status()}`);
+      };
+      page.on("response", collectMutation);
+      const directDelete = item.getByText(/删除/).last();
+      if (await directDelete.isVisible().catch(() => false)) {
+        await directDelete.click();
+      } else {
+        const more = item.locator(
+          "button, [role='button'], [class*='more'], [class*='operate']",
+        ).filter({ hasText: /更多|操作|\.\.\.|···/ }).last();
+        if (!await more.isVisible().catch(() => false)) {
+          throw new ToutiaoRelayError(
+            "DELETE_CONTROL_NOT_FOUND",
+            "没有找到草稿删除操作入口。",
+          );
+        }
+        await more.click();
+        const menuDelete = page.getByText(/删除/).last();
+        await menuDelete.waitFor({ state: "visible", timeout: 8_000 });
+        await menuDelete.click();
+      }
+      const dialog = page.locator(".byte-modal, [role='dialog']").filter({
+        hasText: /删除/,
+      }).last();
+      await dialog.waitFor({ state: "visible", timeout: 8_000 }).catch(() => {
+        throw new ToutiaoRelayError(
+          "DELETE_CONFIRM_FAILED",
+          "删除确认框没有出现，已停止后续发布。",
+        );
+      });
+      const dialogControls = await dialog.locator(
+        "button, [role='button'], [class*='button'], [class*='btn']",
+      ).evaluateAll((elements) =>
+        elements.slice(-8).map((element) => ({
+          tag: element.tagName,
+          text: (element.textContent ?? "").trim().slice(0, 40),
+          className: element.getAttribute("class") ?? "",
+        }))
+      );
+      // 当前头条确认框的文字渲染不稳定，不能依赖无障碍名称；
+      // 主按钮是右侧红色的 byte-btn-primary，不能误点最后的关闭图标。
+      const confirm = dialog.locator("button.byte-btn-primary").last();
+      if (!await confirm.isVisible().catch(() => false)) {
+        throw new ToutiaoRelayError(
+          "DELETE_CONFIRM_FAILED",
+          "删除确认框中没有找到确认按钮。",
+        );
+      }
+      await confirm.click();
+      await page.waitForTimeout(1_500);
+      page.off("response", collectMutation);
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
+      await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(
+        () => {},
+      );
+      const stillExists = await page.locator(".article-draft-item").filter({
+        hasText: record.title,
+      }).first().isVisible().catch(() => false);
+      if (stillExists) {
+        throw new ToutiaoRelayError(
+          "DELETE_CONFIRM_FAILED",
+          "删除后草稿仍在列表中，已停止后续发布。",
+          {
+            mutationResponses: mutationResponses.join("; ") ||
+              "未观察到草稿删除请求",
+            dialogControls: JSON.stringify(dialogControls),
+          },
+        );
+      }
+      await this.records.remove(record.idempotencyKey);
+      return {
+        title: record.title,
+        deleted: true,
+        idempotencyKey: record.idempotencyKey,
+        articleId: record.articleId,
+        screenshotPath: await this.captureScreenshot(page, "draft-deleted"),
+      };
+    } catch (error) {
+      const screenshotPath = await this.captureScreenshot(
+        page,
+        "draft-delete-error",
+      )
+        .catch(() => undefined);
+      const relayError = error instanceof ToutiaoRelayError
+        ? error
+        : new ToutiaoRelayError(
+          "UNKNOWN",
+          error instanceof Error ? error.message : String(error),
+        );
+      throw new ToutiaoRelayError(
+        relayError.code,
+        `${relayError.message}${
+          screenshotPath ? `；截图：${screenshotPath}` : ""
+        }`,
+        relayError.details,
+      );
+    } finally {
+      await page.close().catch(() => {});
+    }
   }
 
   async reconcileArticle(input: {
@@ -288,7 +486,7 @@ export class ToutiaoBrowserSession {
           "今日头条账号未登录，无法反查发布状态",
         );
       }
-      const remote = await findRemoteArticleByTitle(page, record.title);
+      const remote = await findRemoteArticle(page, record);
       if (!remote) {
         if (record.status === "pending_reconciliation") {
           throw new ToutiaoRelayError(
@@ -304,6 +502,8 @@ export class ToutiaoBrowserSession {
         articleId: remote.articleId,
         status: remote.status,
         currentUrl: remote.currentUrl,
+        editUrl: remote.editUrl ?? record.editUrl,
+        platformCreatedAt: remote.platformCreatedAt ?? record.platformCreatedAt,
         updatedAt: now,
         reconciledAt: now,
       });
@@ -324,6 +524,16 @@ export class ToutiaoBrowserSession {
         "IDEMPOTENCY_CONFLICT",
         "同一个 idempotencyKey 已关联另一篇头条文章，拒绝覆盖",
         { previousTitle: record.title, requestedTitle: request.title.trim() },
+      );
+    }
+    const requestedFingerprint = await requestContentFingerprint(request);
+    if (
+      record.contentFingerprint && requestedFingerprint &&
+      record.contentFingerprint !== requestedFingerprint
+    ) {
+      throw new ToutiaoRelayError(
+        "IDEMPOTENCY_CONFLICT",
+        "同一个 idempotencyKey 已关联不同正文，拒绝用新内容覆盖既有草稿。",
       );
     }
     if (
@@ -353,7 +563,12 @@ export class ToutiaoBrowserSession {
     const page = await this.newPage();
     let remote: RemoteArticle | undefined;
     try {
-      remote = await findRemoteArticleByTitle(page, input.request.title.trim());
+      const criteria = {
+        title: input.request.title.trim(),
+        contentFingerprint: await requestContentFingerprint(input.request),
+        createdAt: now,
+      };
+      remote = await findRemoteArticleByCriteria(page, criteria);
     } finally {
       await page.close().catch(() => {});
     }
@@ -363,6 +578,9 @@ export class ToutiaoBrowserSession {
       articleId: remote?.articleId,
       status: remote?.status ?? "pending_reconciliation",
       currentUrl: remote?.currentUrl,
+      editUrl: remote?.editUrl,
+      contentFingerprint: await requestContentFingerprint(input.request),
+      platformCreatedAt: remote?.platformCreatedAt,
       createdAt: now,
       updatedAt: now,
       reconciledAt: now,
@@ -509,20 +727,39 @@ async function openExistingDraftForEditing(
   page: Page,
   record: ToutiaoArticleRecord,
 ): Promise<void> {
-  if (!record.articleId) {
+  if (!record.articleId && !record.editUrl) {
     throw new ToutiaoRelayError(
       "RECONCILE_NOT_FOUND",
       "已找到本地草稿记录，但尚未取得头条真实草稿 ID，不能安全继续正式发布。",
     );
   }
-  const draftId = encodeURIComponent(record.articleId);
+  const draftId = record.articleId
+    ? encodeURIComponent(record.articleId)
+    : undefined;
+  // edit_url 是草稿列表返回的真实入口；参数拼接只是旧版接口的兼容兜底。
   const candidates = [
-    `${PUBLISH_URL}?draft_id=${draftId}`,
-    `${PUBLISH_URL}?group_id=${draftId}`,
-  ];
+    record.editUrl,
+    record.currentUrl?.includes("/graphic/publish")
+      ? record.currentUrl
+      : undefined,
+    draftId ? `${PUBLISH_URL}?draft_id=${draftId}` : undefined,
+    draftId ? `${PUBLISH_URL}?group_id=${draftId}` : undefined,
+  ].filter((url): url is string =>
+    Boolean(url) && /^https:\/\/mp\.toutiao\.com\//.test(url)
+  );
   for (const url of candidates) {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
     await waitForEditor(page).catch(() => {});
+    await page.waitForFunction(
+      (expectedTitle) => {
+        const element = document.querySelector<
+          HTMLInputElement | HTMLTextAreaElement
+        >("textarea[placeholder*='标题'],input[placeholder*='标题']");
+        return element?.value?.trim() === expectedTitle;
+      },
+      record.title,
+      { timeout: 10_000 },
+    ).catch(() => {});
     const title = await page.evaluate(() => {
       const element = document.querySelector<
         HTMLInputElement | HTMLTextAreaElement
@@ -543,9 +780,32 @@ async function openExistingDraftForEditing(
     () => {},
   );
   await page.waitForTimeout(2_000);
-  const draftTitle = page.getByText(record.title, { exact: true }).last();
+  const matchingTitles = page.getByText(record.title, { exact: true });
+  const titleCount = await matchingTitles.count();
+  const draftTitle = matchingTitles.last();
   if (await draftTitle.isVisible().catch(() => false)) {
-    await draftTitle.click();
+    // 草稿箱标题是普通文本，真正可点击的是同一行右侧的“编辑”入口。
+    // 从标题向上收敛到最近含链接/按钮的容器，避免误点其它同名草稿。
+    const draftRow = draftTitle.locator(
+      "xpath=ancestor::div[.//a or .//button][1]",
+    );
+    const editControl = draftRow.locator("a,button").filter({
+      hasText: /^\s*(编辑|修改)\s*$/,
+    }).first();
+    if (await editControl.isVisible().catch(() => false)) {
+      await editControl.click({ force: true });
+    } else {
+      // 头条草稿列表部分版本把“编辑”渲染为标题容器的同级节点，
+      // 祖先选择器无法覆盖。标题与每行“编辑”按列表顺序一一对应，
+      // 仅在数量一致时用该索引点击，避免跨行误操作。
+      const editButtons = page.getByText("编辑", { exact: true });
+      const editCount = await editButtons.count();
+      if (titleCount === editCount && titleCount > 0) {
+        await editButtons.nth(titleCount - 1).click({ force: true });
+      } else {
+        await draftTitle.click();
+      }
+    }
     await waitForEditor(page).catch(() => {});
     const title = await page.evaluate(() => {
       const element = document.querySelector<
@@ -745,7 +1005,10 @@ async function verifyContentReadback(
   const actualNormalized = normalizeText(actualText);
   // 头条会按段落、超链接和视觉换行拆分文本节点，逐字连续包含会把完整正文
   // 误判为缺失。用开头锚点与 90% 有效长度共同校验，仍可拦截半截写入。
-  const anchor = expectedNormalized.slice(0, Math.min(80, expectedNormalized.length));
+  const anchor = expectedNormalized.slice(
+    0,
+    Math.min(80, expectedNormalized.length),
+  );
   const contentLooksComplete = actualNormalized.includes(anchor) &&
     actualNormalized.length >= expectedNormalized.length * 0.9;
   if (!contentLooksComplete) {
@@ -772,22 +1035,51 @@ async function uploadCover(page: Page, imagePath: string): Promise<void> {
   await addCover.click();
   const drawer = page.locator(".byte-drawer").filter({ hasText: "上传图片" })
     .last();
-  const uploadInput = drawer.locator("input[type='file'][accept*='image']")
-    .first();
-  if (!await uploadInput.count()) {
-    throw new ToutiaoRelayError(
-      "COVER_UPLOAD_FAILED",
-      "图片上传抽屉中没有找到文件输入框",
-    );
+  // 头条上传控件会随页面版本变化：部分版本没有 accept="image/*"，
+  // 或把隐藏的 file input 挂在抽屉根节点之外。优先限定在抽屉内，
+  // 再回退到页面最后一个文件输入框。
+  const drawerUploadInput = drawer.locator("input[type='file']").first();
+  const uploadInput = await drawerUploadInput.count()
+    ? drawerUploadInput
+    : page.locator("input[type='file']").last();
+  if (await uploadInput.count()) {
+    await uploadInput.setInputFiles(imagePath).catch((error) => {
+      throw new ToutiaoRelayError(
+        "COVER_UPLOAD_FAILED",
+        "今日头条拒绝接收封面文件",
+        { cause: error instanceof Error ? error.message : String(error) },
+      );
+    });
+  } else {
+    // 新版图片库会在点击“本地上传”后才动态创建 file input。
+    const localUpload = drawer.getByRole("button", {
+      name: "本地上传",
+      exact: true,
+    }).first();
+    if (!await localUpload.isVisible().catch(() => false)) {
+      throw new ToutiaoRelayError(
+        "COVER_UPLOAD_FAILED",
+        "图片上传抽屉中没有找到文件输入框或“本地上传”按钮",
+      );
+    }
+    const chooserPromise = page.waitForEvent("filechooser", {
+      timeout: 10_000,
+    }).catch(() => undefined);
+    await localUpload.click({ force: true });
+    const chooser = await chooserPromise;
+    if (chooser) {
+      await chooser.setFiles(imagePath);
+    } else {
+      const dynamicInput = page.locator("input[type='file']").last();
+      if (!await dynamicInput.count()) {
+        throw new ToutiaoRelayError(
+          "COVER_UPLOAD_FAILED",
+          "点击“本地上传”后未出现文件选择控件",
+        );
+      }
+      await dynamicInput.setInputFiles(imagePath);
+    }
   }
-
-  await uploadInput.setInputFiles(imagePath).catch((error) => {
-    throw new ToutiaoRelayError(
-      "COVER_UPLOAD_FAILED",
-      "今日头条拒绝接收封面文件",
-      { cause: error instanceof Error ? error.message : String(error) },
-    );
-  });
   await drawer.getByText(/已上传\s*1\s*张图片/).waitFor({
     state: "visible",
     timeout: 20_000,
@@ -798,7 +1090,13 @@ async function uploadCover(page: Page, imagePath: string): Promise<void> {
     );
   });
 
-  await drawer.getByRole("button", { name: "确定", exact: true }).click();
+  const confirmUpload = drawer.getByRole("button", {
+    name: "确定",
+    exact: true,
+  });
+  // 该确认按钮位于抽屉内部滚动区之外，Playwright 的指针点击无法命中；
+  // 直接在真实按钮节点上触发 click 事件，仍会走页面原有的上传确认处理。
+  await confirmUpload.evaluate((element: HTMLElement) => element.click());
   await drawer.waitFor({ state: "hidden", timeout: 15_000 }).catch(() => {
     throw new ToutiaoRelayError(
       "COVER_UPLOAD_FAILED",
@@ -884,17 +1182,27 @@ async function publishImmediately(page: Page): Promise<void> {
   // 先滚动到可视范围，再强制点击实际按钮，避免被导航条拦截。
   await previewButton.scrollIntoViewIfNeeded();
   await previewButton.click({ force: true });
-
-  const confirmButton = page.getByRole("button", {
-    name: /^(发布|确认发布|立即发布)$/,
+  // 第二步只能在“预览并发布”触发的确认弹窗内完成，不能再从编辑器页面
+  // 模糊检索“发布”，否则会重复点击第一步按钮而永远停留在编辑器。
+  const publishDialog = page.locator(".byte-modal, [role='dialog']").filter({
+    hasText: /发布|确认/,
   }).last();
-  await confirmButton.waitFor({ state: "visible", timeout: 20_000 }).catch(
+  await publishDialog.waitFor({ state: "visible", timeout: 3_000 }).catch(
     () => {},
   );
+  const dialogConfirm = publishDialog.locator("button.byte-btn-primary").last();
+  // 头条新版会直接把编辑页底部的红色按钮切换为“确认发布”，不再弹窗。
+  const inlineConfirm = page.locator("button.byte-btn-primary").filter({
+    // 不能匹配“预览并发布”，否则会再次点击第一步按钮而停留在编辑页。
+    hasText: /^\s*(确认发布|立即发布|发布)\s*$/,
+  }).last();
+  const confirmButton = await dialogConfirm.isVisible().catch(() => false)
+    ? dialogConfirm
+    : inlineConfirm;
   if (!await confirmButton.isVisible().catch(() => false)) {
     throw new ToutiaoRelayError(
       "PUBLISH_CONFIRM_FAILED",
-      "打开发布预览 20 秒后仍没有找到最终发布确认按钮",
+      "打开发布预览 20 秒后仍没有找到发布确认框中的最终发布按钮",
     );
   }
   if (await confirmButton.isDisabled().catch(() => false)) {
@@ -905,21 +1213,8 @@ async function publishImmediately(page: Page): Promise<void> {
   }
   await confirmButton.scrollIntoViewIfNeeded();
   await confirmButton.click({ force: true });
-  const success = await Promise.any([
-    page.getByText(/发布成功|作品发布成功|已发布成功/).first().waitFor({
-      state: "visible",
-      timeout: 20_000,
-    }).then(() => true),
-    page.waitForURL(/\/manage\/content|\/profile_v4\/manage/, {
-      timeout: 20_000,
-    }).then(() => true),
-  ]).catch(() => false);
-  if (!success) {
-    throw new ToutiaoRelayError(
-      "PUBLISH_CONFIRM_FAILED",
-      "点击最终发布后未检测到成功提示或作品管理页，已停止并保留截图供核查。",
-    );
-  }
+  // 点击只代表浏览器把请求交给平台；最终是否成功由作品管理接口轮询确认。
+  await page.waitForTimeout(500);
 }
 
 async function dismissOptionalDialog(page: Page): Promise<void> {
@@ -980,19 +1275,30 @@ async function requirePublishCover(
  * 以头条草稿列表接口为主源反查文章。页面 DOM 仅用于确认该标题确实出现，
  * 不从 DOM 猜测文章 ID，避免因页面改版产生错误映射。
  */
-async function findRemoteArticleByTitle(
+async function findRemoteArticle(
   page: Page,
-  title: string,
+  record: ToutiaoArticleRecord,
+): Promise<RemoteArticle | undefined> {
+  return await findRemoteArticleByCriteria(page, {
+    title: record.title,
+    contentFingerprint: record.contentFingerprint,
+    createdAt: record.createdAt,
+  });
+}
+
+async function findRemoteArticleByCriteria(
+  page: Page,
+  criteria: ArticleMatchCriteria,
 ): Promise<RemoteArticle | undefined> {
   // 已提交的作品在“作品管理”和“草稿箱”可能短暂同时出现。优先作品管理，
   // 防止同标题草稿掩盖已进入审核或已发布的真实终态。
-  return await findManagedContentByTitle(page, title) ??
-    await findDraftByTitle(page, title);
+  return await findManagedContentByTitle(page, criteria) ??
+    await findDraftByTitle(page, criteria);
 }
 
 async function findDraftByTitle(
   page: Page,
-  title: string,
+  criteria: ArticleMatchCriteria,
 ): Promise<RemoteArticle | undefined> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const responsePromise = page.waitForResponse(
@@ -1008,7 +1314,7 @@ async function findDraftByTitle(
     const response = await responsePromise;
     if (response) {
       const payload = await response.json().catch(() => undefined);
-      const draft = findMatchingDraft(payload, title);
+      const draft = await findMatchingDraft(payload, criteria);
       if (draft) return draft;
     }
     // 列表接口偶尔会先返回旧缓存，短暂等待后再发起一次请求。
@@ -1016,7 +1322,7 @@ async function findDraftByTitle(
   }
 
   const draftItem = page.locator(".article-draft-item").filter({
-    hasText: title,
+    hasText: criteria.title,
   });
   if (await draftItem.count()) {
     // DOM 兜底只证明草稿已出现；没有稳定 ID 时必须继续保持待反查状态。
@@ -1037,7 +1343,7 @@ async function findDraftByTitle(
 /** 从作品管理接口反查已定时或已发布内容。 */
 async function findManagedContentByTitle(
   page: Page,
-  title: string,
+  criteria: ArticleMatchCriteria,
 ): Promise<RemoteArticle | undefined> {
   const responsePromise = page.waitForResponse(
     (response) =>
@@ -1051,71 +1357,25 @@ async function findManagedContentByTitle(
   });
   const response = await responsePromise;
   if (!response) return undefined;
-  return findMatchingManagedContent(
+  return await findMatchingManagedContent(
     await response.json().catch(() => undefined),
-    title,
+    criteria,
   );
 }
 
-function findMatchingManagedContent(
-  value: unknown,
-  title: string,
-): RemoteArticle | undefined {
-  for (const item of findObjectsWithTitle(value, title)) {
-    const articleId = firstString(
-      item.article_id,
-      item.content_id,
-      item.item_id,
-      item.group_id,
-      item.id,
+/** 正式发布后的唯一成功依据：作品管理接口已返回同一篇已发布内容。 */
+async function waitForPublishedContent(
+  page: Page,
+  criteria: ArticleMatchCriteria,
+): Promise<RemoteArticle | undefined> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const remote = await findManagedContentByTitle(page, criteria).catch(() =>
+      undefined
     );
-    if (!articleId) continue;
-    const statusText = [
-      item.status,
-      item.status_desc,
-      item.publish_status,
-      item.publish_status_desc,
-      item.display_status,
-    ].map((entry) => String(entry ?? "")).join(" ");
-    const status = /定时|schedule/i.test(statusText) ||
-        hasFuturePublishTime(item.publish_time ?? item.publishTime)
-      ? "scheduled"
-      : "published";
-    return {
-      articleId,
-      status,
-      currentUrl: firstString(item.url, item.edit_url) ?? CONTENT_LIST_URL,
-    };
+    if (remote?.status === "published") return remote;
+    if (attempt < 4) await page.waitForTimeout(4_000);
   }
   return undefined;
-}
-
-function findObjectsWithTitle(
-  value: unknown,
-  title: string,
-): Record<string, unknown>[] {
-  if (!value || typeof value !== "object") return [];
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => findObjectsWithTitle(item, title));
-  }
-  const object = value as Record<string, unknown>;
-  const matched = readString(object.title) === title ? [object] : [];
-  return [
-    ...matched,
-    ...Object.values(object).flatMap((item) =>
-      findObjectsWithTitle(item, title)
-    ),
-  ];
-}
-
-function hasFuturePublishTime(value: unknown): boolean {
-  if (typeof value === "number") {
-    const milliseconds = value < 1_000_000_000_000 ? value * 1000 : value;
-    return milliseconds > Date.now();
-  }
-  if (typeof value !== "string") return false;
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) && timestamp > Date.now();
 }
 
 function firstString(...values: unknown[]): string | undefined {
@@ -1162,6 +1422,13 @@ function publishResultFromRecord(
     articleId: record.articleId,
     reconciledAt: record.reconciledAt,
   };
+}
+
+async function requestContentFingerprint(
+  request: Pick<ToutiaoDraftRequest, "contentHtml" | "contentText">,
+): Promise<string | undefined> {
+  const content = request.contentText?.trim() ?? request.contentHtml?.trim();
+  return content ? await createContentFingerprint(content) : undefined;
 }
 
 function toPlainText(value: string): string {

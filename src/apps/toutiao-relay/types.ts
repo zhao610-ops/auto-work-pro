@@ -62,6 +62,14 @@ export interface ToutiaoPublishResult {
   reconciledAt?: string;
 }
 
+export interface ToutiaoDeleteDraftResult {
+  title: string;
+  deleted: boolean;
+  idempotencyKey?: string;
+  articleId?: string;
+  screenshotPath?: string;
+}
+
 export type ToutiaoRemoteStatus =
   | "draft"
   | "scheduled"
@@ -78,6 +86,12 @@ export interface ToutiaoArticleRecord {
   articleId?: string;
   status: ToutiaoRemoteStatus;
   currentUrl?: string;
+  /** 头条接口返回的真实编辑地址，恢复草稿时优先使用。 */
+  editUrl?: string;
+  /** 经标准化后计算的正文 SHA-256 指纹，用于排除同标题草稿。 */
+  contentFingerprint?: string;
+  /** 头条列表记录的创建或更新时间。 */
+  platformCreatedAt?: string;
   scheduledFor?: string;
   createdAt: string;
   updatedAt: string;

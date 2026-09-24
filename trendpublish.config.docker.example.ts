@@ -40,6 +40,11 @@ export default defineConfig((runtime) => ({
         apiKey: runtime.secret("DASHSCOPE_API_KEY"),
       },
     },
+    stockPhoto: {
+      pexels: {
+        apiKey: runtime.secret("PEXELS_API_KEY"),
+      },
+    },
     publish: {
       weixin: {
         appId: runtime.secret("WEIXIN_APP_ID"),
@@ -89,9 +94,7 @@ export default defineConfig((runtime) => ({
       },
       bodyImages: {
         mode: "off",
-        provider: "dashscope",
         count: 1,
-        size: "1024*1024",
       },
       deduplication: {
         enabled: false,

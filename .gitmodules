@@ -1,0 +1,3 @@
+[submodule "third_party/toutiao-auto-publisher"]
+	path = third_party/toutiao-auto-publisher
+	url = https://github.com/xc-2000/toutiao-auto-publisher.git

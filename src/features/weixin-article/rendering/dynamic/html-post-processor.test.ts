@@ -48,6 +48,22 @@ Deno.test("postProcessDynamicHtml converts lists and sanitizes images", () => {
   assert(!/\sclass=/i.test(result.html));
 });
 
+Deno.test("postProcessDynamicHtml preserves Pexels attribution links", () => {
+  const result = postProcessDynamicHtml(
+    '<section><p>图片：<a href="https://www.pexels.com/@author">摄影师</a> / <a href="https://www.pexels.com/photo/1">Pexels</a></p></section>',
+  );
+
+  assertStringIncludes(
+    result.html,
+    '<a href="https://www.pexels.com/@author">摄影师</a>',
+  );
+  assertStringIncludes(
+    result.html,
+    '<a href="https://www.pexels.com/photo/1">Pexels</a>',
+  );
+  assertEquals(result.footnotes, []);
+});
+
 Deno.test("postProcessDynamicHtml rejects non-section root", () => {
   assertThrows(
     () => postProcessDynamicHtml("<p>正文</p>"),

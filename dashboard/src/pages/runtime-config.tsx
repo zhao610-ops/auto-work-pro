@@ -593,21 +593,8 @@ function TrendProfileView(
               </Select>
             </label>
             <label className="space-y-1.5">
-              <span className="tp-muted text-xs font-medium">图片能力</span>
-              <Select
-                value={draft.bodyImageProfileId}
-                onChange={(event) =>
-                  update("bodyImageProfileId", event.currentTarget.value)}
-                disabled={draft.bodyImagesMode === "off"}
-              >
-                {capabilityOptions(capabilities, "image-generation").map((
-                  item,
-                ) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </Select>
+              <span className="tp-muted text-xs font-medium">图片来源</span>
+              <Input value="Pexels 正版图库" disabled />
             </label>
             <label className="space-y-1.5">
               <span className="tp-muted text-xs font-medium">配图数量</span>
@@ -622,13 +609,8 @@ function TrendProfileView(
               />
             </label>
             <label className="space-y-1.5">
-              <span className="tp-muted text-xs font-medium">图片尺寸</span>
-              <Input
-                value={draft.bodyImageSize}
-                disabled={draft.bodyImagesMode === "off"}
-                onChange={(event) =>
-                  update("bodyImageSize", event.currentTarget.value)}
-              />
+              <span className="tp-muted text-xs font-medium">图片方向</span>
+              <Input value="横图（landscape）" disabled />
             </label>
           </div>
 

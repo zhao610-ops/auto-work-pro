@@ -426,9 +426,7 @@ export function ArticleWorkbenchHome(
               />
               <SetupLine
                 label="正文配图"
-                value={`${config?.article.bodyImages.mode ?? "off"} · ${
-                  config?.article.bodyImages.provider ?? "-"
-                }`}
+                value={`${config?.article.bodyImages.mode ?? "off"} · Pexels`}
               />
               <SetupLine
                 label="质量门禁"

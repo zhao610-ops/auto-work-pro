@@ -292,18 +292,18 @@ function checkConfig(config: ResolvedTrendPublishConfig) {
     "封面生图",
     `图片生成 (${config.features.article.cover.provider})`,
     config.features.article.cover.enabled,
-    getImageGeneratorCheck(config, "cover").configured,
-    getImageGeneratorCheck(config, "cover").requiredPaths,
+    getImageGeneratorCheck(config).configured,
+    getImageGeneratorCheck(config).requiredPaths,
     "未开启时封面生成会走本地兜底图。",
   );
 
   checkProviderFeature(
     "正文配图",
-    `AI 智能配图 (${config.features.article.bodyImages.provider})`,
+    "Pexels 正版图库",
     config.features.article.bodyImages.mode !== "off",
-    getImageGeneratorCheck(config, "body").configured,
-    getImageGeneratorCheck(config, "body").requiredPaths,
-    "开启后会按文章内容生成正文配图，失败时回退已有 media 图片布局。",
+    Boolean(config.providers.stockPhoto.pexels.apiKey),
+    ["providers.stockPhoto.pexels.apiKey / PEXELS_API_KEY"],
+    "原文图优先；缺图时检索 Pexels，失败时跳过该章节配图。",
   );
 
   const dedupVectorStore = config.features.article.deduplication.vectorStore;
@@ -363,18 +363,13 @@ function checkConfig(config: ResolvedTrendPublishConfig) {
 
 function getImageGeneratorCheck(
   config: ResolvedTrendPublishConfig,
-  usage: "cover" | "body",
 ): { configured: boolean; requiredPaths: string[] } {
-  const provider = usage === "cover"
-    ? config.features.article.cover.provider
-    : config.features.article.bodyImages.provider;
+  const provider = config.features.article.cover.provider;
   switch (provider) {
     case "dashscope": {
-      const type = usage === "cover"
-        ? ImageGeneratorType.ALIYUN_POSTER
-        : ImageGeneratorType.ALIYUN_IMAGE;
       return {
-        configured: imageGeneratorRegistry.get(type).isConfigured(config),
+        configured: imageGeneratorRegistry.get(ImageGeneratorType.ALIYUN_POSTER)
+          .isConfigured(config),
         requiredPaths: ["providers.image.dashscope.apiKey"],
       };
     }

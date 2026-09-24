@@ -68,6 +68,39 @@ Deno.test("quality gate blocks low score real publish", () => {
   assertEquals(decision.action, "block");
 });
 
+Deno.test("quality gate allows dry-run-only review when score reaches the threshold", () => {
+  const decision = evaluateArticleQualityGate({
+    review: {
+      ...baseReview,
+      overallScore: 78,
+      allowPublish: false,
+      recommendedAction: "dry-run-only",
+    },
+    config: { ...baseConfig, minScore: 60 },
+    dryRun: false,
+  });
+
+  assertEquals(decision.allowed, true);
+  assertEquals(decision.bypassed, false);
+  assertEquals(decision.action, "allow");
+});
+
+Deno.test("quality gate still blocks dry-run-only review below the score threshold", () => {
+  const decision = evaluateArticleQualityGate({
+    review: {
+      ...baseReview,
+      overallScore: 59,
+      allowPublish: false,
+      recommendedAction: "dry-run-only",
+    },
+    config: { ...baseConfig, minScore: 60 },
+    dryRun: false,
+  });
+
+  assertEquals(decision.allowed, false);
+  assertEquals(decision.reason, "质量分 59 低于门禁 60");
+});
+
 Deno.test("quality gate blocks high fact issue", () => {
   const decision = evaluateArticleQualityGate({
     review: {
