@@ -49,6 +49,7 @@ const TEST_FILES = [
   "src/features/weixin-article/services/article-render.service.test.ts",
   "src/features/weixin-article/services/content-scrape.service.test.ts",
   "src/features/weixin-article/services/content-process.service.test.ts",
+  "src/features/weixin-article/services/content-safety-filter.service.test.ts",
   "src/features/weixin-article/services/editorial-topic.service.test.ts",
   "src/features/weixin-article/services/editorial-decision.service.test.ts",
   "src/features/weixin-article/services/article-plan.service.test.ts",

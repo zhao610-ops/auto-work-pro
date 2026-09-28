@@ -5,6 +5,7 @@ import type { ArticlePlan } from "@src/features/weixin-article/domain/article-pl
 import type { EditorialTopicReport } from "@src/features/weixin-article/domain/editorial-topic.ts";
 import type { EvidencePack } from "@src/features/weixin-article/domain/evidence.ts";
 import { ARTICLE_LLM_TIMEOUT_MS } from "@src/features/weixin-article/services/article-llm-budget.ts";
+import { inspectContentSafety } from "@src/features/weixin-article/services/content-safety-filter.service.ts";
 import {
   ArticleQualityReview,
   QualityDimensionScores,
@@ -151,6 +152,17 @@ export function scanLocalComplianceIssues(
       ? [createComplianceIssue(rule.id, rule.message)]
       : []
   );
+  const safetyDecision = inspectContentSafety({
+    title: input.title,
+    content: input.html,
+  });
+  for (const match of safetyDecision.matches) {
+    issues.push(createComplianceIssue(
+      match.id,
+      match.message,
+      match.evidence,
+    ));
+  }
   const forbiddenTopics = Array.isArray(accountBrand?.forbiddenTopics)
     ? accountBrand.forbiddenTopics.filter((item): item is string =>
       typeof item === "string" && item.trim().length >= 2
@@ -200,14 +212,18 @@ function applyLocalComplianceReview(
   };
 }
 
-function createComplianceIssue(id: string, message: string): QualityIssue {
+function createComplianceIssue(
+  id: string,
+  message: string,
+  evidence?: string,
+): QualityIssue {
   return {
     id: `compliance-${id}`,
     category: "risk",
     severity: "blocker",
     message,
-    suggestion:
-      "删除相关推广、交易、操作指引或禁区主题内容，重新审稿后再发布。",
+    ...(evidence ? { evidence } : {}),
+    suggestion: "删除命中的禁区主题、推广、交易或操作指引，重新审稿后再发布。",
     autoFixable: false,
   };
 }

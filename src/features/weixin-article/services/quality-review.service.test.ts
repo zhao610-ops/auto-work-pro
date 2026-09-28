@@ -222,6 +222,32 @@ Deno.test("quality review blocks explicit gambling promotion locally", async () 
   assertEquals(review.issues[0].id, "compliance-gambling-promotion");
 });
 
+Deno.test("quality review blocks political content before publishing", async () => {
+  const service = createService(JSON.stringify({
+    overallScore: 92,
+    allowPublish: true,
+    recommendedAction: "publish",
+    issues: [],
+  }));
+  const review = await service.reviewArticle({
+    title: "特朗普与习近平会晤未就 AI 达成协议",
+    html: "<section><p>白宫峰会还讨论了对台军售。</p></section>",
+    articlePlan,
+    topicReport,
+    contents,
+  });
+
+  assertEquals(review.overallScore, 39);
+  assertEquals(review.allowPublish, false);
+  assertEquals(review.recommendedAction, "block");
+  assertEquals(
+    review.issues.some((issue) =>
+      issue.id === "compliance-political-figures-and-institutions"
+    ),
+    true,
+  );
+});
+
 Deno.test("quality review does not block neutral risk reporting", async () => {
   const service = createService(JSON.stringify({
     overallScore: 88,

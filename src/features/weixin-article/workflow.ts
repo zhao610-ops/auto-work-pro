@@ -38,6 +38,10 @@ import type { ResolvedTrendPublishConfig } from "@src/utils/config/define-config
 import type { ArticlePublishMode } from "@src/utils/config/define-config.ts";
 import { hasDraftFallback } from "@src/features/weixin-article/services/article-draft.service.ts";
 import type { FactVerificationReport } from "@src/features/weixin-article/services/fact-verification.service.ts";
+import {
+  filterUnsafeContents,
+  inspectContentSafety,
+} from "@src/features/weixin-article/services/content-safety-filter.service.ts";
 
 const logger = new Logger("weixin-article-workflow");
 
@@ -247,18 +251,47 @@ export class WeixinArticleWorkflow {
         async () => {
           const allContents = await artifactStore
             .getJson<ScrapedContent[]>(allContentsRef);
-          const result = await this.dependencies.dedupService.deduplicate(
+          const deduplicated = await this.dependencies.dedupService.deduplicate(
             allContents,
           );
+          const safetyResult = filterUnsafeContents(deduplicated);
+          if (safetyResult.report.blockedCount > 0) {
+            const categories = [
+              ...new Set(
+                safetyResult.report.blocked.flatMap((item) =>
+                  item.matches.map((match) => match.categoryLabel)
+                ),
+              ),
+            ].join("、");
+            logger.warn(
+              `[内容门禁] 已过滤 ${safetyResult.report.blockedCount} 篇，命中类别: ${categories}`,
+            );
+          }
           const ref = await artifactStore.putJson(
             artifactStore.createRunKey(runId, "03-unique-contents", "json"),
-            result,
-            { label: "去重后内容", contentType: "application/json" },
+            safetyResult.contents,
+            { label: "去重并通过门禁的内容", contentType: "application/json" },
           );
-          return { result: ref, artifacts: [ref] };
+          const safetyRef = await artifactStore.putJson(
+            artifactStore.createRunKey(
+              runId,
+              "03-content-safety-filter",
+              "json",
+            ),
+            safetyResult.report,
+            { label: "抓取内容安全门禁", contentType: "application/json" },
+          );
+          return { result: ref, artifacts: [ref, safetyRef] };
         },
         [allContentsRef],
       );
+      const uniqueContentsForGuard = await artifactStore
+        .getJson<ScrapedContent[]>(uniqueContentsRef);
+      if (uniqueContentsForGuard.length === 0) {
+        throw new WorkflowTerminateError(
+          "抓取内容全部命中政治、军事、违法、暴力、谣言、投资诱导、医疗建议或软文门禁，流程终止",
+        );
+      }
 
       const topicReportRef = await this.runTrackedStep(
         step,
@@ -992,6 +1025,39 @@ export class WeixinArticleWorkflow {
           },
         );
 
+      const finalSafetyRef = await this.runTrackedStep(
+        step,
+        runId,
+        "check-final-content-safety",
+        {
+          retries: { limit: 0, delay: "1 second", backoff: "linear" },
+          timeout: "1 minute",
+        },
+        async () => {
+          const result = inspectContentSafety({
+            title: finalTitle,
+            content: await artifactStore.getText(finalHtmlSnapshotRef),
+          });
+          const ref = await artifactStore.putJson(
+            artifactStore.createRunKey(runId, "19-content-safety", "json"),
+            result,
+            { label: "发布前内容安全门禁", contentType: "application/json" },
+          );
+          return { result: ref, artifacts: [ref] };
+        },
+        [finalTitleRef, finalHtmlSnapshotRef, finalReviewRef],
+      );
+      const finalSafety = await artifactStore.getJson<
+        ReturnType<typeof inspectContentSafety>
+      >(finalSafetyRef);
+      if (!finalSafety.passed) {
+        throw new WorkflowTerminateError(
+          `发布前内容门禁未通过：${
+            finalSafety.matches.map((item) => item.categoryLabel).join("、")
+          }`,
+        );
+      }
+
       const publishRef = await this.runTrackedStep(
         step,
         runId,
@@ -1109,6 +1175,7 @@ export class WeixinArticleWorkflow {
           finalTitleRef,
           coverRef,
           finalReviewRef,
+          finalSafetyRef,
           draftedTemplateDataRef,
           ...(factVerificationRef ? [factVerificationRef] : []),
         ],

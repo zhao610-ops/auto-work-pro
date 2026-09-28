@@ -63,6 +63,7 @@ export class WeixinArticleImageLayoutService
     article: WeixinTemplate,
     usedMediaUrls = new Set<string>(),
   ): WeixinTemplate {
+    if (!isBodyImageEnabled(article)) return article;
     const mediaUrl = this.getUnusedMediaUrl(article.media, usedMediaUrls);
     if (!mediaUrl) {
       return article;
@@ -138,10 +139,15 @@ export class PexelsArticleImageLayoutService
     }
 
     const usedMediaUrls = new Set<string>();
+    const usedStockPhotoIds = new Set<string>();
     const result: WeixinTemplate[] = [];
     for (const article of articles) {
       result.push(
-        await this.layoutArticleWithUsedMedia(article, usedMediaUrls),
+        await this.layoutArticleWithUsedMedia(
+          article,
+          usedMediaUrls,
+          usedStockPhotoIds,
+        ),
       );
     }
     return result;
@@ -152,13 +158,19 @@ export class PexelsArticleImageLayoutService
       return await this.fallbackLayoutService.layoutArticle(article);
     }
 
-    return await this.layoutArticleWithUsedMedia(article, new Set<string>());
+    return await this.layoutArticleWithUsedMedia(
+      article,
+      new Set<string>(),
+      new Set<string>(),
+    );
   }
 
   private async layoutArticleWithUsedMedia(
     article: WeixinTemplate,
     usedMediaUrls: Set<string>,
+    usedStockPhotoIds: Set<string>,
   ): Promise<WeixinTemplate> {
+    if (!isBodyImageEnabled(article)) return article;
     if (this.fallbackLayoutService.hasUnusedMedia(article, usedMediaUrls)) {
       return this.fallbackLayoutService.layoutExistingMedia(
         article,
@@ -167,7 +179,11 @@ export class PexelsArticleImageLayoutService
     }
 
     try {
-      const photo = await this.findUnusedPhoto(article, usedMediaUrls);
+      const photo = await this.findUnusedPhoto(
+        article,
+        usedMediaUrls,
+        usedStockPhotoIds,
+      );
       if (!photo) {
         logger.warn(
           `[Pexels正文配图] 未找到相关图片，跳过章节: ${article.title}`,
@@ -175,6 +191,7 @@ export class PexelsArticleImageLayoutService
         return article;
       }
       usedMediaUrls.add(normalizeMediaUrl(photo.imageUrl));
+      usedStockPhotoIds.add(photo.id);
       return insertAfterFirstParagraph(
         article,
         this.buildPexelsImageHtml(article, photo),
@@ -193,6 +210,7 @@ export class PexelsArticleImageLayoutService
   private async findUnusedPhoto(
     article: WeixinTemplate,
     usedMediaUrls: ReadonlySet<string>,
+    usedStockPhotoIds: ReadonlySet<string>,
   ): Promise<StockPhoto | undefined> {
     for (const query of buildPexelsQueries(article)) {
       const photos = await this.photoSearch.search({
@@ -202,6 +220,7 @@ export class PexelsArticleImageLayoutService
         perPage: this.config.perPage,
       });
       const photo = photos.find((item) =>
+        !usedStockPhotoIds.has(item.id) &&
         !usedMediaUrls.has(normalizeMediaUrl(item.imageUrl))
       );
       if (photo) {
@@ -246,15 +265,29 @@ function insertAfterFirstParagraph(
 }
 
 function buildPexelsQueries(article: WeixinTemplate): string[] {
+  const promptHint = stringMetadata(article, "bodyImagePromptHint");
+  const purpose = stringMetadata(article, "bodyImagePurpose");
   const title = stripHtml(article.title).replace(/[《》【】「」“”]/g, " ");
   const keywords = article.keywords
     .map((item) => item.trim())
     .filter(Boolean)
     .slice(0, 5)
     .join(" ");
-  return [...new Set([title, keywords])]
+  return [...new Set([promptHint, purpose, title, keywords])]
     .map((item) => item.replace(/\s+/g, " ").trim().slice(0, 120))
     .filter(Boolean);
+}
+
+function isBodyImageEnabled(article: WeixinTemplate): boolean {
+  return article.metadata.bodyImageEnabled !== false;
+}
+
+function stringMetadata(
+  article: WeixinTemplate,
+  key: string,
+): string {
+  const value = article.metadata[key];
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function escapeHtmlAttribute(value: string): string {

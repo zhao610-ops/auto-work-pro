@@ -37,7 +37,9 @@ ${newsroomStyle}
 9. lead 必须是 eligibleForLead=true 的主题；若没有合格主题，明确选择 watch，不得拼凑低质量主线。
 10. 正文必须优先产出“结论、证据、抓手”，而不是泛泛叙事或心灵鸡汤。
 11. sourceJudgements 中标为 primary 的每一篇，都会直接进入正文候选池：它们必须与 lead 共享同一主体、同一事件，或形成可在原文中说明的直接业务因果链。仅共享“经济、成本、进口、AI”等宽泛关键词不算相关；不确定就标 supporting 或 reference-only。
-12. 输出必须是 JSON，不要 Markdown、代码围栏或 <think>。
+12. 完整分析的 lead 必须围绕一个来源可验证的知名企业、品牌、主要国家、权威机构或直接相关知名人物；知名主体只有背景性提及时不能作为主线。没有单一知名主体的趋势，必须有权威数据和至少两个知名品牌案例。
+13. finalScore >= 70 才可推荐 deep-analysis 或 trend-analysis；60-69 分即使通过主线准入，也只能推荐 daily-brief，禁止扩写成长篇深度分析。
+14. 输出必须是 JSON，不要 Markdown、代码围栏或 <think>。
 
 JSON 结构必须是：
 {
@@ -78,6 +80,8 @@ export function getEditorialDecisionUserPrompt(
 - 选择 1 个 lead topic；其他主题只能作为 supporting / watch，或跳过。
 - lead topic 必须能形成新闻钩子：新鲜事实、明确影响对象、反差或后续变量至少满足一个。
 - lead topic 必须明确写出它服务哪个目标岗位、支持哪项业务判断；不能用纯技术新鲜度代替账号相关性；只从 eligibleForLead=true 的主题中选择。
+- lead topic 必须说明知名主体的具体动作或数据；如果只是借用知名名称吸引点击，必须跳过。
+- finalScore 在 60-69 分时 recommendedFormat 必须是 daily-brief；70 分以上才能选择 deep-analysis 或 trend-analysis。
 - skippedTopics 必须解释为什么不写，常见原因包括重复、证据不足、风险高、读者价值弱、同质化高。
 - duplicationRisk 必须参考近期文章和人工反馈。
 - sourceJudgements 只评价本次候选文章 URL，不评价无关来源。

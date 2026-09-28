@@ -65,6 +65,21 @@ def now_beijing() -> datetime:
     return datetime.now().astimezone()
 
 
+def require_content_safety_passed(run: Path) -> None:
+    """只接收主系统明确标记为通过安全门禁的发布产物。"""
+    safety_path = run / "19-content-safety.json"
+    if not safety_path.is_file():
+        raise RuntimeError("主系统产物缺少发布前内容安全门禁结果")
+    try:
+        safety = load_json(safety_path)
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("发布前内容安全门禁结果无法读取") from error
+    if safety.get("passed") is not True:
+        categories = safety.get("blockedCategories") or []
+        category_text = "、".join(str(item) for item in categories) or "未知类别"
+        raise RuntimeError(f"发布前内容安全门禁未通过: {category_text}")
+
+
 def article_run() -> Path | None:
     candidates = []
     for path in UPSTREAM.iterdir() if UPSTREAM.is_dir() else []:
@@ -80,10 +95,16 @@ def article_run() -> Path | None:
     if time.time() - modified_at > MAX_ARTICLE_AGE_SECONDS:
         LOG.warning("最新文章产物已超过允许时效，拒绝发布旧内容: %s", latest.name)
         return None
+    try:
+        require_content_safety_passed(latest)
+    except RuntimeError as error:
+        LOG.warning("最新文章产物未通过安全门禁，拒绝进入头条发布: %s", error)
+        return None
     return latest
 
 
 def materialize(run: Path) -> tuple[Path, dict]:
+    require_content_safety_passed(run)
     title = load_json(run / "18-final-title.json").get("title", "").strip()
     html_path = run / "19-final-article.html"
     if not html_path.exists():

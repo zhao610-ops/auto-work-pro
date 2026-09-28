@@ -30,7 +30,7 @@ export class GdeltScraper implements ContentScraper {
     query: string,
     options?: ScraperOptions,
   ): Promise<ScrapedContent[]> {
-    const normalizedQuery = query.trim();
+    const normalizedQuery = normalizeGdeltQuery(query);
     if (!normalizedQuery) throw new Error("GDELT 查询词不能为空");
 
     const limit = normalizeLimit(options?.limit, 10, 50);
@@ -71,6 +71,18 @@ export class GdeltScraper implements ContentScraper {
       )
       .slice(0, limit);
   }
+}
+
+/**
+ * GDELT 会把未加引号的连字符视为查询语法并直接拒绝请求。
+ * 研究关键词来自模型生成，保留词义的同时将各类连接号统一为空格，
+ * 避免单个标题格式问题让整次外部证据查询失效。
+ */
+export function normalizeGdeltQuery(query: string): string {
+  return query
+    .replace(/[-‐-―−]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function fetchJsonWithTextFallback(

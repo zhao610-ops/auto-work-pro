@@ -48,11 +48,18 @@ export class WeixinArticleRenderService {
     articlePlan: ArticlePlan,
   ): WeixinTemplate[] {
     const byId = new Map(contents.map((content) => [content.id, content]));
+    const imagePlacementBySectionId = new Map(
+      articlePlan.bodyImagePlan.placements.map((placement) => [
+        placement.sectionId,
+        placement,
+      ]),
+    );
     return articlePlan.sections.map((section, index) => {
       const relatedContents = section.articleIds
         .map((id) => byId.get(id))
         .filter((content): content is ScrapedContent => Boolean(content));
       const primary = relatedContents[0] ?? contents[index] ?? contents[0];
+      const imagePlacement = imagePlacementBySectionId.get(section.id);
       const content = [
         `章节目标（仅作编辑目标，不是事实来源）：${section.intent}`,
         `写作角度（仅作编辑目标，不是事实来源）：${section.angle}`,
@@ -78,6 +85,10 @@ export class WeixinArticleRenderService {
           sourceExcerptText: relatedContents.map((item) =>
             sourceExcerptForGrounding(item)
           ).join("\n\n"),
+          bodyImageEnabled: articlePlan.bodyImagePlan.enabled &&
+            Boolean(imagePlacement),
+          bodyImagePurpose: imagePlacement?.purpose,
+          bodyImagePromptHint: imagePlacement?.promptHint,
           score: primary?.metadata?.score,
         },
         keywords: collectKeywords(relatedContents),

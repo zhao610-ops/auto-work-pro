@@ -129,7 +129,7 @@ export function normalizeArticlePlan(
   const validArticleIds = new Set(contents.map((content) => content.id));
   const sourceArticleIds = new Set<string>();
   const format = normalizeFormat(raw.format);
-  const sections = ensureThreeContentSections(
+  const sections = ensureFocusedContentSections(
     normalizeSections(raw.sections, validArticleIds),
     contents,
   );
@@ -142,7 +142,7 @@ export function normalizeArticlePlan(
   }
 
   const coverDirection = normalizeCoverDirection(raw.coverDirection);
-  const bodyImagePlan = createThreeContentImagePlan(sections);
+  const bodyImagePlan = createFocusedContentImagePlan(sections);
   const riskNotes = normalizeRiskNotes(raw.riskNotes);
 
   const plan: ArticlePlan = {
@@ -222,7 +222,7 @@ function createFallbackArticlePlan(
       articleIds: [content.id],
       keyPoints: [content.content.slice(0, 160)],
     }));
-  const sections = ensureThreeContentSections(candidateSections, contents);
+  const sections = ensureFocusedContentSections(candidateSections, contents);
   const firstTitle = sections[0]?.title ?? contents[0]?.title ?? "今日内容";
   const targetReader = stringValue(accountBrand?.audience) ??
     "关注本领域趋势的读者";
@@ -263,7 +263,7 @@ function createFallbackArticlePlan(
       textBrief: firstTitle,
       mood: "清晰、专业、少装饰",
     },
-    bodyImagePlan: createThreeContentImagePlan(sections),
+    bodyImagePlan: createFocusedContentImagePlan(sections),
     riskNotes: [{
       level: "medium",
       issue: decision?.duplicationRisk.reason ??
@@ -320,7 +320,7 @@ function enforceEvidenceDepthGate(
       angle: "证据不足时使用已确认来源标题。",
       reason: "缺少直接证据，避免标题承诺深度分析或检查清单。",
     }],
-    bodyImagePlan: createThreeContentImagePlan(sections),
+    bodyImagePlan: createFocusedContentImagePlan(sections),
     riskNotes: [evidenceGapRiskNote, ...plan.riskNotes].slice(0, 6),
     sourceArticleIds: [
       ...new Set(sections.flatMap((section) => section.articleIds)),
@@ -732,11 +732,11 @@ function normalizeSections(
 /**
  * 章节数量由主线证据决定。不得用无关热点补齐固定篇幅。
  */
-function ensureThreeContentSections(
+function ensureFocusedContentSections(
   sections: ArticlePlanSection[],
   contents: ScrapedContent[],
 ): ArticlePlanSection[] {
-  if (sections.length) return sections.slice(0, 3);
+  if (sections.length) return sections.slice(0, 5);
   const lead = contents[0];
   if (!lead) return [];
   return [{
@@ -749,19 +749,80 @@ function ensureThreeContentSections(
   }];
 }
 
-/** 每个内容块固定一个图片插槽；来源图优先，缺失时由 Pexels 检索服务补图。 */
-function createThreeContentImagePlan(
+/**
+ * 正文最多安排三张图：事件现场、消费/市场趋势、岗位/业务影响。
+ * 五段式文章不需要每段都插图，避免图片过密和同质化。
+ */
+function createFocusedContentImagePlan(
   sections: ArticlePlanSection[],
 ): ArticleBodyImagePlan {
+  const selected = selectImageSections(sections);
   return {
-    enabled: sections.length > 0,
-    placements: sections.map((section, index) => ({
+    enabled: selected.length > 0,
+    placements: selected.map(({ section, role }) => ({
       sectionId: section.id,
-      purpose: `为第 ${index + 1} 条内容提供与事实主体直接相关的正文配图。`,
-      promptHint:
-        `${section.title}：检索相关人物、产品、生活场景或实体对象的真实摄影图片。`,
+      purpose: imagePurpose(role),
+      promptHint: imagePromptHint(section, role),
     })),
   };
+}
+
+type BodyImageRole = "event" | "trend" | "work";
+
+function selectImageSections(
+  sections: ArticlePlanSection[],
+): Array<{ section: ArticlePlanSection; role: BodyImageRole }> {
+  if (!sections.length) return [];
+  const selected: Array<{ section: ArticlePlanSection; role: BodyImageRole }> = [
+    { section: sections[0], role: "event" },
+  ];
+  const used = new Set([sections[0].id]);
+  const take = (pattern: RegExp, role: BodyImageRole) => {
+    const section = sections.find((item) =>
+      !used.has(item.id) && pattern.test(
+        `${item.title} ${item.intent} ${item.angle}`,
+      )
+    );
+    if (!section) return;
+    used.add(section.id);
+    selected.push({ section, role });
+  };
+
+  take(/消费|市场|趋势|需求|品类|价格|渠道|行业/u, "trend");
+  take(/岗位|业务|市场部|品牌|企划|用户研究|决策|影响/u, "work");
+
+  const fallbackRoles: BodyImageRole[] = ["trend", "work"];
+  for (const section of sections) {
+    if (selected.length >= 3) break;
+    if (used.has(section.id)) continue;
+    const role = fallbackRoles.shift() ?? "work";
+    used.add(section.id);
+    selected.push({ section, role });
+  }
+  return selected.slice(0, 3);
+}
+
+function imagePurpose(role: BodyImageRole): string {
+  switch (role) {
+    case "event":
+      return "呈现知名主体、产品、门店、工厂或行业现场，帮助读者理解事件本身。";
+    case "trend":
+      return "呈现消费者日常、零售、家庭或城市商业场景，辅助说明市场与消费趋势。";
+    case "work":
+      return "呈现市场、品牌、产品企划或用户研究的真实协作场景，辅助说明业务影响。";
+  }
+}
+
+function imagePromptHint(
+  section: ArticlePlanSection,
+  role: BodyImageRole,
+): string {
+  const scene = role === "event"
+    ? "企业、产品、门店、工厂或行业现场"
+    : role === "trend"
+    ? "消费者、购物、家庭生活、商场或城市商业"
+    : "市场团队、品牌讨论、产品企划、用户访谈或数据分析";
+  return `${section.title}；检索与章节事实对应的${scene}真实纪实摄影，不搜索无关品牌，不使用 AI 图片。`;
 }
 
 function normalizeTitleDirections(
