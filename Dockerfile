@@ -18,6 +18,8 @@ COPY wrangler.jsonc ./wrangler.jsonc
 
 RUN deno run --config dashboard/deno.json -A npm:vite@8.0.13 build --config dashboard/vite.config.ts
 RUN deno cache src/index.ts src/apps/weixin-relay/server.ts scripts/run.workflow.ts scripts/doctor.ts scripts/preview.weixin.ts
+# 构建期初始化 SQLite FFI，避免容器每次首次启动时再访问 GitHub 下载动态库。
+RUN deno eval 'import { Database } from "@db/sqlite"; const database = new Database(":memory:"); database.close();'
 RUN mkdir -p /app/config /app/src/temp \
   && ln -s /app/src /app/config/src \
   && chown -R deno:deno /app /deno-dir

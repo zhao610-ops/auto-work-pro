@@ -38,6 +38,11 @@ PUBLISH_ENABLED = os.getenv("TOUTIAO_PUBLISH_ENABLED", "false").lower() == "true
 DAILY_LEDGER = STATE / "published-days.json"
 MAX_BODY_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_BODY_IMAGES = 6
+STATUS_POLL_SECONDS = max(1, int(os.getenv("TOUTIAO_STATUS_POLL_SECONDS", "10")))
+STATUS_POLL_ATTEMPTS = max(
+    1,
+    min(6, int(os.getenv("TOUTIAO_STATUS_POLL_ATTEMPTS", "3"))),
+)
 
 
 @dataclass
@@ -80,15 +85,29 @@ def require_content_safety_passed(run: Path) -> None:
         raise RuntimeError(f"发布前内容安全门禁未通过: {category_text}")
 
 
+def load_toutiao_rewrite(run: Path) -> dict:
+    """读取主系统的一体化真实性校正与合规重写产物。"""
+    rewrite_path = run / "20-toutiao-article.json"
+    if not rewrite_path.is_file():
+        raise RuntimeError("主系统产物缺少头条联网校正重写结果")
+    try:
+        rewrite = load_json(rewrite_path)
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("头条联网校正重写结果无法读取") from error
+    if rewrite.get("ready") is not True or rewrite.get("safetyPassed") is not True:
+        reason = str(rewrite.get("error") or "重写产物未通过安全检查")
+        raise RuntimeError(f"头条联网校正重写未就绪: {reason}")
+    if not all(str(rewrite.get(key) or "").strip() for key in ("title", "summary", "html")):
+        raise RuntimeError("头条联网校正重写缺少标题、摘要或正文")
+    return rewrite
+
+
 def article_run() -> Path | None:
     candidates = []
     for path in UPSTREAM.iterdir() if UPSTREAM.is_dir() else []:
-        title = path / "18-final-title.json"
-        html = path / "19-final-article.html"
-        if not html.exists():
-            html = path / "16-revised-article-round-1.html"
-        if title.exists() and html.exists() and (path / "11-cover.json").exists():
-            candidates.append((title.stat().st_mtime, path))
+        rewrite = path / "20-toutiao-article.json"
+        if rewrite.exists() and (path / "11-cover.json").exists():
+            candidates.append((rewrite.stat().st_mtime, path))
     if not candidates:
         return None
     modified_at, latest = max(candidates)
@@ -97,19 +116,19 @@ def article_run() -> Path | None:
         return None
     try:
         require_content_safety_passed(latest)
+        load_toutiao_rewrite(latest)
     except RuntimeError as error:
-        LOG.warning("最新文章产物未通过安全门禁，拒绝进入头条发布: %s", error)
+        LOG.warning("最新文章产物未通过头条发布前检查，拒绝进入发布: %s", error)
         return None
     return latest
 
 
 def materialize(run: Path) -> tuple[Path, dict]:
     require_content_safety_passed(run)
-    title = load_json(run / "18-final-title.json").get("title", "").strip()
-    html_path = run / "19-final-article.html"
-    if not html_path.exists():
-        html_path = run / "16-revised-article-round-1.html"
-    html = html_path.read_text(encoding="utf-8")
+    rewrite = load_toutiao_rewrite(run)
+    title = str(rewrite["title"]).strip()
+    summary = str(rewrite["summary"]).strip()
+    html = str(rewrite["html"]).strip()
     cover_url = load_json(run / "11-cover.json").get("imageUrl", "").strip()
     if not title or not html or not cover_url:
         raise RuntimeError("发布产物缺少标题、正文或封面")
@@ -125,7 +144,15 @@ def materialize(run: Path) -> tuple[Path, dict]:
         "id": key, "title": title, "sourceRun": run.name,
         "createdAt": datetime.now().astimezone().isoformat(), "status": "ready", "attempts": 0,
     }
-    manifest.update({"title": title, "html": "article.html", "cover": "cover.jpg", "contentHash": key})
+    manifest.update({
+        "title": title,
+        "summary": summary,
+        "html": "article.html",
+        "cover": "cover.jpg",
+        "contentHash": key,
+        "networkEvidenceCount": int(rewrite.get("networkEvidenceCount") or 0),
+        "rewriteGeneratedAt": str(rewrite.get("generatedAt") or ""),
+    })
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return directory, manifest
 
@@ -265,18 +292,247 @@ def publish(directory: Path, manifest: dict) -> None:
             )
             article = ExternalArticle(
                 title=manifest["title"],
-                summary=manifest["title"],
+                summary=manifest["summary"],
                 body_html=body_html,
                 tags=[],
                 topic=manifest["title"],
             )
             report = client.publish(article, "publish", directory / manifest["cover"])
-        manifest.update({"status": "published", "publishedAt": datetime.now().astimezone().isoformat(), "report": report})
+            pgc_id = str(report.get("pgc_id") or "")
+            if not pgc_id:
+                raise RuntimeError("头条发布响应缺少文章 ID，无法核验公开状态")
+            # 提交成功后先固化文章 ID。后续状态查询即使暂时失败，也绝不重复提交。
+            manifest.update({
+                "status": "submitted",
+                "submittedAt": datetime.now().astimezone().isoformat(),
+                "report": report,
+            })
+            save_manifest(directory, manifest)
+            try:
+                publication = wait_for_publication_status(client, pgc_id)
+            except Exception as status_error:
+                LOG.warning("头条文章已提交，但公开状态暂时无法核验: %s", status_error)
+                publication = {
+                    "state": "reviewing",
+                    "pgcId": pgc_id,
+                    "statusDesc": "公开状态查询暂时失败，等待下一次心跳复查",
+                    "reason": str(status_error),
+                    "showShare": None,
+                    "visibilityLevel": None,
+                    "articleUrl": f"https://www.toutiao.com/article/{pgc_id}/",
+                    "checkedAt": datetime.now().astimezone().isoformat(),
+                }
+        apply_publication_status(manifest, report, publication)
     except Exception as error:  # 保留失败状态，下一次心跳按次数重试。
         manifest.update({"status": "failed", "error": str(error), "failedAt": datetime.now().astimezone().isoformat()})
         raise
     finally:
         save_manifest(directory, manifest)
+
+
+def walk_dicts(value):
+    """递归遍历接口数据中的字典，兼容头条列表接口的多层结构。"""
+    if isinstance(value, dict):
+        yield value
+        for item in value.values():
+            yield from walk_dicts(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from walk_dicts(item)
+
+
+def parse_json_object(value) -> dict:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip().startswith("{"):
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def embedded_objects(value) -> list[dict]:
+    """展开文章条目里的嵌套对象、数组和 JSON 字符串。"""
+    if isinstance(value, str):
+        parsed = parse_json_object(value)
+        return embedded_objects(parsed) if parsed else []
+    if isinstance(value, dict):
+        return [value, *[
+            nested
+            for item in value.values()
+            for nested in embedded_objects(item)
+        ]]
+    if isinstance(value, list):
+        return [nested for item in value for nested in embedded_objects(item)]
+    return []
+
+
+def first_value(objects: list[dict], *keys: str):
+    for item in objects:
+        for key in keys:
+            if key in item and item[key] is not None:
+                return item[key]
+    return None
+
+
+def normalize_bool(value) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+    return None
+
+
+def find_publication_status(payload: dict, pgc_id: str) -> dict:
+    """从创作中心列表响应中识别文章是否真正对外可见。"""
+    id_keys = ("pgc_id", "pgcId", "item_id", "itemId", "gid", "group_id")
+    for item in walk_dicts(payload):
+        objects = [item]
+        for key in ("pgc_cell", "article_attr", "menu_list"):
+            objects.extend(embedded_objects(item.get(key)))
+        identifiers = {
+            str(value)
+            for obj in objects
+            for key in id_keys
+            if (value := obj.get(key)) is not None
+        }
+        if pgc_id not in identifiers:
+            continue
+
+        is_passed = normalize_bool(first_value(objects, "is_passed", "isPassed"))
+        is_unpass = normalize_bool(first_value(objects, "is_unpass", "isUnpass"))
+        article_banned = normalize_bool(
+            first_value(objects, "article_banned", "articleBanned")
+        )
+        show_share = normalize_bool(first_value(objects, "show_share", "showShare"))
+        status_desc = str(first_value(objects, "status_desc", "statusDesc") or "")
+        reason = str(
+            first_value(
+                objects,
+                "forbid_share_reason",
+                "forbidShareReason",
+                "unpass_reason",
+                "reject_reason",
+            )
+            or ""
+        )
+        article_url = str(
+            first_value(objects, "article_url", "articleUrl", "display_url")
+            or f"https://www.toutiao.com/article/{pgc_id}/"
+        )
+        visibility_level = first_value(objects, "visibility_level", "visibilityLevel")
+
+        if is_unpass is True or article_banned is True or "未通过" in status_desc:
+            state = "rejected"
+        elif is_passed is True and show_share is True:
+            state = "public"
+        elif is_passed is True and show_share is False:
+            state = "limited"
+        else:
+            state = "reviewing"
+        return {
+            "state": state,
+            "pgcId": pgc_id,
+            "statusDesc": status_desc,
+            "reason": reason,
+            "showShare": show_share,
+            "visibilityLevel": visibility_level,
+            "articleUrl": article_url,
+            "checkedAt": datetime.now().astimezone().isoformat(),
+        }
+    return {
+        "state": "reviewing",
+        "pgcId": pgc_id,
+        "statusDesc": "创作中心列表暂未出现该文章",
+        "reason": "",
+        "showShare": None,
+        "visibilityLevel": None,
+        "articleUrl": f"https://www.toutiao.com/article/{pgc_id}/",
+        "checkedAt": datetime.now().astimezone().isoformat(),
+    }
+
+
+def get_publication_status(client: ToutiaoProtocolClient, pgc_id: str) -> dict:
+    payload = client.request_json(
+        "GET",
+        "/mp/agw/creator_center/list",
+        params={"type": 0, "status": 0, "page": 1, "size": 20},
+    )
+    return find_publication_status(payload, pgc_id)
+
+
+def wait_for_publication_status(
+    client: ToutiaoProtocolClient,
+    pgc_id: str,
+) -> dict:
+    result = {"state": "reviewing", "pgcId": pgc_id}
+    for attempt in range(STATUS_POLL_ATTEMPTS):
+        if attempt:
+            time.sleep(STATUS_POLL_SECONDS)
+        result = get_publication_status(client, pgc_id)
+        if result["state"] != "reviewing":
+            break
+    return result
+
+
+def apply_publication_status(
+    manifest: dict,
+    report: dict,
+    publication: dict,
+) -> None:
+    state = publication.get("state")
+    status = {
+        "public": "published",
+        "limited": "limited",
+        "rejected": "rejected",
+        "reviewing": "submitted",
+    }.get(state, "submitted")
+    manifest.update({
+        "status": status,
+        "submittedAt": manifest.get("submittedAt")
+        or datetime.now().astimezone().isoformat(),
+        "report": report,
+        "publication": publication,
+    })
+    if status == "published":
+        manifest["publishedAt"] = datetime.now().astimezone().isoformat()
+        manifest["publicUrl"] = publication.get("articleUrl")
+        manifest.pop("error", None)
+        LOG.info("头条文章已确认公开可见: %s", manifest["publicUrl"])
+    elif status in {"limited", "rejected"}:
+        reason = publication.get("reason") or publication.get("statusDesc")
+        manifest["error"] = f"头条文章未公开可见: {reason or status}"
+        LOG.error("%s", manifest["error"])
+    else:
+        LOG.info("头条文章已提交，仍在等待平台公开状态: %s", publication.get("statusDesc"))
+
+
+def refresh_submitted_status(directory: Path, manifest: dict) -> None:
+    report = manifest.get("report") if isinstance(manifest.get("report"), dict) else {}
+    pgc_id = str(report.get("pgc_id") or "")
+    if not pgc_id:
+        manifest.update({"status": "failed", "error": "已提交任务缺少文章 ID"})
+        save_manifest(directory, manifest)
+        return
+    config = load_toml(CONFIG)
+    credentials = load_active_account_credentials(config)
+    with ToutiaoProtocolClient(
+        config,
+        CONFIG.parent,
+        cookie_override=credentials["cookies"],
+        headers_override=credentials["headers"],
+    ) as client:
+        publication = get_publication_status(client, pgc_id)
+    apply_publication_status(manifest, report, publication)
+    save_manifest(directory, manifest)
 
 
 def load_toml(path: Path) -> dict:
@@ -358,13 +614,21 @@ def tick() -> None:
         LOG.info("尚未发现可发布的主系统文章产物")
         return
     directory, manifest = materialize(run)
-    if manifest.get("status") == "published" or not due() or not PUBLISH_ENABLED:
+    if manifest.get("status") == "submitted" and due() and PUBLISH_ENABLED:
+        refresh_submitted_status(directory, manifest)
+        if manifest.get("status") == "published":
+            mark_published_today(manifest)
+        return
+    if manifest.get("status") in {"published", "limited", "rejected"}:
+        return
+    if not due() or not PUBLISH_ENABLED:
         return
     if manifest.get("status") == "failed" and int(manifest.get("attempts", 0)) >= 3:
         LOG.error("任务 %s 已失败三次，停止自动重试", manifest["id"])
         return
     publish(directory, manifest)
-    mark_published_today(manifest)
+    if manifest.get("status") == "published":
+        mark_published_today(manifest)
 
 
 def main() -> None:

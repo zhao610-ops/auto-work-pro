@@ -61,5 +61,108 @@ class ContentSafetyGateTest(unittest.TestCase):
                 WORKER.require_content_safety_passed(run)
 
 
+class ToutiaoRewriteGateTest(unittest.TestCase):
+    def test_accepts_ready_safe_rewrite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            payload = {
+                "ready": True,
+                "safetyPassed": True,
+                "title": "ASML 区域收入结构释放哪些信号",
+                "summary": "从公开报告拆解区域收入结构。",
+                "html": "<section><p>正文内容</p></section>",
+            }
+            (run / "20-toutiao-article.json").write_text(
+                json.dumps(payload, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            self.assertEqual(WORKER.load_toutiao_rewrite(run), payload)
+
+    def test_rejects_missing_rewrite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "缺少"):
+                WORKER.load_toutiao_rewrite(Path(directory))
+
+    def test_rejects_unready_rewrite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            (run / "20-toutiao-article.json").write_text(
+                json.dumps(
+                    {
+                        "ready": False,
+                        "safetyPassed": False,
+                        "error": "命中政治门禁",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "命中政治门禁"):
+                WORKER.load_toutiao_rewrite(run)
+
+
+class PublicationStatusTest(unittest.TestCase):
+    def test_detects_public_article(self):
+        payload = {
+            "data": {
+                "list": [{
+                    "pgc_id": "1001",
+                    "article_attr": {
+                        "is_passed": True,
+                        "show_share": True,
+                        "status_desc": "已发布",
+                        "article_url": "https://www.toutiao.com/article/1001/",
+                    },
+                }]
+            }
+        }
+        result = WORKER.find_publication_status(payload, "1001")
+        self.assertEqual(result["state"], "public")
+        self.assertTrue(result["showShare"])
+
+    def test_detects_limited_article_from_json_cell(self):
+        payload = {
+            "data": {
+                "list": [{
+                    "pgc_cell": json.dumps({
+                        "pgc_id": "1002",
+                        "article_attr": {
+                            "is_passed": True,
+                            "status_desc": "已发布",
+                        },
+                        "menu_list": [{
+                            "show_share": False,
+                            "forbid_share_reason": "该内容不支持分享",
+                            "visibility_level": 15,
+                        }],
+                    }, ensure_ascii=False),
+                }]
+            }
+        }
+        result = WORKER.find_publication_status(payload, "1002")
+        self.assertEqual(result["state"], "limited")
+        self.assertEqual(result["reason"], "该内容不支持分享")
+        self.assertEqual(result["visibilityLevel"], 15)
+
+    def test_detects_rejected_article(self):
+        payload = {
+            "data": {
+                "list": [{
+                    "item_id": "1003",
+                    "is_unpass": True,
+                    "status_desc": "审核未通过",
+                    "unpass_reason": "内容质量不足",
+                }]
+            }
+        }
+        result = WORKER.find_publication_status(payload, "1003")
+        self.assertEqual(result["state"], "rejected")
+        self.assertEqual(result["reason"], "内容质量不足")
+
+    def test_keeps_unknown_article_reviewing(self):
+        result = WORKER.find_publication_status({"data": {"list": []}}, "1004")
+        self.assertEqual(result["state"], "reviewing")
+
+
 if __name__ == "__main__":
     unittest.main()

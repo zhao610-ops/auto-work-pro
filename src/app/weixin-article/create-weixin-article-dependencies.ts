@@ -43,6 +43,7 @@ import { WeixinArticlePlanService } from "@src/features/weixin-article/services/
 import { WeixinArticleDraftService } from "@src/features/weixin-article/services/article-draft.service.ts";
 import { WeixinArticleResearchService } from "@src/features/weixin-article/services/article-research.service.ts";
 import { WeixinArticleFactVerificationService } from "@src/features/weixin-article/services/fact-verification.service.ts";
+import { ToutiaoConnectedRewriteService } from "@src/features/weixin-article/services/toutiao-connected-rewrite.service.ts";
 import { WeixinArticleQualityReviewService } from "@src/features/weixin-article/services/quality-review.service.ts";
 import { WeixinArticleRevisionService } from "@src/features/weixin-article/services/article-revision.service.ts";
 import { ResolvedTrendPublishConfig } from "@src/utils/config/define-config.ts";
@@ -206,6 +207,7 @@ export async function createWeixinArticleDependencies(
       llmProvider,
       researchSearchProviders,
     ),
+    toutiaoRewriteService: new ToutiaoConnectedRewriteService(llmProvider),
     qualityReviewService: new WeixinArticleQualityReviewService(
       llmProvider,
       promptProfile,

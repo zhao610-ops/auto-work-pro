@@ -20,6 +20,7 @@ import { WeixinArticleQualityReviewService } from "@src/features/weixin-article/
 import { WeixinArticleRevisionService } from "@src/features/weixin-article/services/article-revision.service.ts";
 import { WeixinArticleResearchService } from "@src/features/weixin-article/services/article-research.service.ts";
 import { WeixinArticleFactVerificationService } from "@src/features/weixin-article/services/fact-verification.service.ts";
+import { ToutiaoConnectedRewriteService } from "@src/features/weixin-article/services/toutiao-connected-rewrite.service.ts";
 import type { WeixinArticleWorkflowConfig } from "@src/features/weixin-article/workflow.ts";
 import type { ArtifactStore } from "@src/core/ports/artifact-store.ts";
 import type {
@@ -57,6 +58,7 @@ export interface WeixinArticleDependencies {
   articleDraftService: WeixinArticleDraftService;
   researchService: WeixinArticleResearchService;
   factVerificationService: WeixinArticleFactVerificationService;
+  toutiaoRewriteService: ToutiaoConnectedRewriteService;
   qualityReviewService: WeixinArticleQualityReviewService;
   revisionService: WeixinArticleRevisionService;
   stats: WeixinArticleWorkflowStats;

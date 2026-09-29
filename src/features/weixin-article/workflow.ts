@@ -38,6 +38,7 @@ import type { ResolvedTrendPublishConfig } from "@src/utils/config/define-config
 import type { ArticlePublishMode } from "@src/utils/config/define-config.ts";
 import { hasDraftFallback } from "@src/features/weixin-article/services/article-draft.service.ts";
 import type { FactVerificationReport } from "@src/features/weixin-article/services/fact-verification.service.ts";
+import type { ToutiaoConnectedRewriteResult } from "@src/features/weixin-article/services/toutiao-connected-rewrite.service.ts";
 import {
   filterUnsafeContents,
   inspectContentSafety,
@@ -1183,6 +1184,46 @@ export class WeixinArticleWorkflow {
       const publishResult = await artifactStore.getJson<PublishResult>(
         publishRef,
       );
+      // 公众号先完成草稿/发布操作，再准备头条专用稿，避免头条模型延迟影响公众号定时群发。
+      const toutiaoRewriteRef = await this.runTrackedStep(
+        step,
+        runId,
+        "prepare-toutiao-connected-rewrite",
+        {
+          retries: { limit: 0, delay: "2 second", backoff: "linear" },
+          timeout: "8 minutes",
+        },
+        async () => {
+          const planInputContents = await artifactStore
+            .getJson<ScrapedContent[]>(planInputContentsRef);
+          const result = await this.dependencies.toutiaoRewriteService.rewrite({
+            title: finalTitle,
+            html: await artifactStore.getText(finalHtmlSnapshotRef),
+            contents: planInputContents,
+            evidencePack,
+          });
+          const ref = await artifactStore.putJson(
+            artifactStore.createRunKey(runId, "20-toutiao-article", "json"),
+            result,
+            {
+              label: "头条联网真实性校正与合规重写",
+              contentType: "application/json",
+            },
+          );
+          return { result: ref, artifacts: [ref] };
+        },
+        [
+          finalHtmlSnapshotRef,
+          finalTitleRef,
+          finalSafetyRef,
+          planInputContentsRef,
+          evidencePackRef,
+          publishRef,
+        ],
+      );
+      const toutiaoRewrite = await artifactStore.getJson<
+        ToutiaoConnectedRewriteResult
+      >(toutiaoRewriteRef);
       await this.dependencies.runtime.editorialMemoryStore.recordArticle({
         runId,
         profileId: this.dependencies.config.profileId,
@@ -1216,6 +1257,7 @@ export class WeixinArticleWorkflow {
         - 修复: ${revisionSummary}
         - 事实核验: ${factVerificationSummary}
         - 质量审稿: ${formatQualityReviewSummary(finalReview)}
+        - 头条重写: ${formatToutiaoRewriteSummary(toutiaoRewrite)}
         - 封面: ${formatCoverSummary(coverResult)}
         - 发布: ${formatPublishSummary(publishResult, dryRun)}`.trim();
 
@@ -1404,6 +1446,15 @@ function extractSourceUrls(contents: ScrapedContent[]): string[] {
 function formatQualityReviewSummary(review: ArticleQualityReview): string {
   const fallback = review.fallback ? "，兜底" : "";
   return `${review.overallScore} 分，${review.recommendedAction}${fallback}`;
+}
+
+function formatToutiaoRewriteSummary(
+  result: ToutiaoConnectedRewriteResult,
+): string {
+  if (!result.ready) {
+    return `未就绪${result.error ? `（${result.error}）` : ""}`;
+  }
+  return `已就绪，使用 ${result.networkEvidenceCount} 条联网证据`;
 }
 
 export function shouldReviseArticle(review: ArticleQualityReview): boolean {

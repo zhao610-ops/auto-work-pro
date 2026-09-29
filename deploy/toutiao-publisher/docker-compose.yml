@@ -9,9 +9,9 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
-        ln -sfn /opt/toutiao-publisher/upstream/web /data/web &&
-        exec python3 /opt/toutiao-publisher/upstream/dashboard.py
-        --config /data/config.toml --host 0.0.0.0 --port 8765
+          ln -sfn /opt/toutiao-publisher/upstream/web /data/web &&
+          exec python3 /opt/toutiao-publisher/upstream/dashboard.py
+          --config /data/config.toml --host 0.0.0.0 --port 8765
     environment:
       TZ: Asia/Shanghai
     ports:
@@ -37,6 +37,8 @@ services:
       TOUTIAO_SCHEDULE_TIME: "11:00"
       TOUTIAO_POLL_SECONDS: "60"
       TOUTIAO_MAX_ARTICLE_AGE_MINUTES: "720"
+      TOUTIAO_STATUS_POLL_SECONDS: "10"
+      TOUTIAO_STATUS_POLL_ATTEMPTS: "3"
       # 仅在面板账号会话已验证后开启；发布器额外保证每天最多成功发布一次。
       TOUTIAO_PUBLISH_ENABLED: "true"
     env_file:
@@ -44,3 +46,5 @@ services:
     volumes:
       - /root/trendpublish/data/temp/runs:/input/runs:ro
       - /root/toutiao-publisher/data:/data
+      # 发布器业务逻辑独立挂载，更新时无需重复构建体积较大的浏览器依赖镜像。
+      - /root/trendpublish/deploy/toutiao-publisher/worker.py:/opt/toutiao-publisher/worker.py:ro
