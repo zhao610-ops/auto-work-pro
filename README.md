@@ -1,558 +1,186 @@
-# TrendPublish
+# 内容自动发布系统
 
-TrendPublish
-是一个面向微信公众号的自动化选题与发布系统。它从你指定的数据源中抓取内容，用 AI
-做选题、证据补全、排序、标题、正文生成、审稿、排版和配图，最后生成可预览的
-dry-run 产物、创建微信公众号草稿，或在质量达标后自动公开发布文章。
+这是一个面向公众号与今日头条的内容生产和定时发布系统。系统从已配置的数据源抓取
+时效内容，完成选题、证据核验、写作、审稿、排版和配图，再按各平台的发布规则执行
+草稿或正式发布。
 
-它不是一个简单的 RSS
-摘要脚本，而是一条可观察、可回滚、可调参的文章生产流水线：每次运行都会留下步骤、错误、质量审稿、HTML、图片和配置快照，方便你复盘为什么这篇文章值得发，以及哪里需要人工介入。
+项目将“内容生成”和“平台发布”分离：公众号使用官方发布能力；今日头条使用独立的
+浏览器 Relay 保存单账号登录态并执行发布。两端共用同一套选题、正文和图片策略，但
+分别保存任务状态、发布记录和失败截图。
 
-项目当前聚焦一条主链路：**微信文章自动发布**。本地、Docker 和 Cloudflare
-都使用同一套 TypeScript 配置模型；Dashboard
-中可编辑数据源、文章方案、共享能力和定时规则，下一次运行即时生效，密钥仍留在部署环境中。
+## 系统能力
 
-![star](https://atomgit.com/liyown/ai-trend-publish/star/badge.svg)
-
-示例公众号：**AISPACE科技空间**
-
-社区交流：
-
-- Discord: https://discord.gg/mrZvBHNawS
-- QQ 群：
-  <a href="https://qun.qq.com/universal-share/share?ac=1&authKey=E68gaXeajH49WXeIiawSS2Smr6uaSYe5zG9VDAEZa6sJgnNTcZd5X7r%2Fi3G6qVOa&busi_data=eyJncm91cENvZGUiOiI3Mzc5MDI3MzEiLCJ0b2tlbiI6Ijd2ZWN6THd6VFQ1TkNvYVJwQVpIbEtRSlM2UTJnYWhlMGxVMWhGUlNKMkV3MytoQWl6bUdNRGl3QjE0bklJMTUiLCJ1aW4iOiIxNTM2NzI3OTI1In0%3D&data=x1m4pt9JPKytsxKlmRh7duo4bnkRCLdhOFY_BhQenSr2dav7_0PoNpJc2sMzZdj3sKt9EPMR_AD9hlwI78HKUA&svctype=4&tempid=h5_group_info" target="_blank" rel="noopener noreferrer">TrendPublish-1</a>
-
-## 为什么做这个
-
-日更类公众号真正耗时的不是“让模型写一段摘要”，而是稳定地完成这些事情：
-
-- 找到足够好的材料，而不是每次只抓到一批重复新闻。
-- 判断今天该写什么，哪些只适合短讯，哪些应该跳过。
-- 保留证据链，避免文章看起来流畅但事实支撑不足。
-- 标题和正文要像人写的内容，不能一眼看出是模板化 AI 速递。
-- 图片、排版、微信兼容 HTML、草稿发布、失败重试都要稳定。
-- 出错时要能看到是哪一步失败，而不是只得到一个终端异常。
-
-TrendPublish 的设计目标就是把这些步骤变成一条清晰的自动化流程：AI
-可以参与选题和创作，但每一步都可追踪、可配置、可 dry-run。
-
-## 核心特点
-
-- **文章质量优先**：内置选题聚类、编辑决策、文章计划、质量审稿和最多一次定向修订，不只做摘要拼接。
-- **多源内容发现**：支持普通网页、RSS/RSSHub、FireCrawl、Jina
-  Reader/Search、Brave、Tavily、Exa、Serper、NewsAPI、GDELT、Hacker
-  News、arXiv、Twitter/X、Xquik。
-- **证据链与补充搜索**：可以用搜索型数据源补全上下文，把选题依据和风险写进运行产物。
-- **微信友好渲染**：内置多套公众号模板，支持 `dynamic` 动态排版，所有 HTML
-  都会做微信兼容清洗。
-- **文章配图**：封面支持阿里云或 MiniMax 生图；正文优先原文图，缺图时检索 Pexels
-  真实摄影图片。
-- **可观察工作流**：Dashboard
-  可查看运行列表、步骤时间线、错误解释、质量报告、HTML/JSON/图片产物。
-- **多公众号矩阵运营**：relay 负责安全代理多个公众号，Dashboard
-  维护每个账号的定位、受众、语气、默认文章方案，并支持矩阵 dry-run。
-- **运行时配置中心**：数据源、文章方案、能力 Profile、定时规则可在 Dashboard
-  修改，下一次运行生效。
-- **部署方式灵活**：本地/Docker 保持完整能力；Cloudflare 使用
-  Worker/Workflows/D1/KV/R2 原生运行；微信真实发布可通过固定 IP relay。
-- **能力可扩展**：大模型、抓取、图片生成、通知、向量去重、发布都以
-  provider/adapter 方式接入，后续扩展不会改穿业务层。
-
-## 产品界面
-
-发布中心会先告诉你最近一次运行结果、当前是否建议进入草稿箱，以及下一步应该检查什么。
-
-![TrendPublish 发布中心](https://oss.liuyaowen.cn/images/dashboard-publish-center.png)
-
-运行页展示每次 workflow
-的步骤、耗时、错误、人工反馈和产物入口，便于定位问题和复盘文章质量。
-
-![TrendPublish 运行详情](https://oss.liuyaowen.cn/images/dashboard-runs.png)
-
-质量复盘页包含选题工作台，可以看到候选主题、入选/跳过原因、账号适配和审稿结果。
-你也可以直接给候选主题标记“锁主线 / 采用 / 跳过”，这些反馈会进入账号级学习，
-帮助下一次选题更贴近该账号的风格。
-
-系统设置页用于维护文章方案、定时规则、共享能力和高级
-JSON。日常使用不需要手写配置文件。
-
-![TrendPublish 系统设置](https://oss.liuyaowen.cn/images/dashboard-settings.png)
-
-## 适合场景
-
-- 每天自动整理 AI、技术、产品、商业或研究资讯，并发布到微信公众号。
-- 维护一组固定数据源，让系统自动发现值得写的选题。
-- 在正式发布前先 dry-run，审阅 HTML、配图、质量报告和错误。
-- 用 Cloudflare 定时运行，或在自己的服务器/Docker 上完整部署。
-- 后续希望扩展到小红书、邮件简报、飞书文档、静态站等其他内容出口。
+- **多源选题**：支持网页、RSS、搜索和社区数据源，按时效、去重、热度、可信度和
+  账号定位筛选内容。
+- **三段式文章**：一篇文章由三个独立内容块组成，每个内容块安排一张相关插图；有
+  可用原文图时优先使用，缺图时由图片能力补齐。
+- **质量门禁**：保留来源、证据、风险项、质量报告和修订记录；高风险事实或质量不达标
+  的内容不会自动公开发布。
+- **公众号发布**：支持封面、正文图片、草稿创建、定时群发和发布状态查询。
+- **今日头条发布**：支持浏览器登录态持久化、草稿、系统定时直接发布、文章状态反查、
+  幂等控制和失败截图。
+- **运行管理**：Dashboard 可查看任务、产物、质量报告、失败原因和调度状态，并调整
+  数据源、文章方案和定时规则。
+- **部署守护**：主服务与头条 Relay 可以作为独立 systemd 服务运行；服务器重启后会
+  恢复调度检查。
 
 ## 工作流
 
 ```mermaid
 flowchart LR
-  A["数据源<br/>URL / RSS / Search / Social"] --> B["抓取与清洗"]
-  B --> C["去重与历史记忆"]
-  C --> D["选题聚类与排序"]
-  D --> E["证据补全"]
-  E --> F["文章计划"]
-  F --> G["正文 / 标题 / 配图"]
-  G --> H["质量审稿与修订"]
-  H --> I["微信兼容 HTML"]
-  I --> J{"dry-run?"}
-  J -->|是| K["保存 HTML / JSON / 图片产物"]
-  J -->|否| L{"发布目标"}
-  L -->|仅草稿| N["创建微信草稿"]
-  L -->|自动发布且达标| O["创建草稿并公开发布"]
-  L -->|自动发布但未达标| N
-  K --> M["Dashboard 复盘"]
-  N --> M
-  O --> M
+  A[数据源] --> B[抓取与清洗]
+  B --> C[去重与选题排序]
+  C --> D[证据补全]
+  D --> E[三段式文章计划]
+  E --> F[写作、配图与排版]
+  F --> G[质量审稿与修订]
+  G --> H{质量门禁}
+  H -->|通过| I[公众号发布 / 头条 Relay 发布]
+  H -->|未通过| J[保留草稿与审稿报告]
+  I --> K[状态反查与运行记录]
+  J --> K
 ```
+
+## 运行环境
+
+- Deno 2 或更高版本。
+- 用于正文生成的兼容 OpenAI 接口的大模型。
+- 需要正式发布公众号时：已开通的公众号凭证和固定出口 IP，或微信公众号 Relay。
+- 需要正式发布今日头条时：服务器 Chrome、独立浏览器资料目录，以及首次扫码登录。
 
 ## 快速开始
 
-### 1. 安装运行环境
-
-需要 Deno v2.0.0 或更高版本。
-
-Windows:
-
-```powershell
-irm https://deno.land/install.ps1 | iex
-```
-
-macOS / Linux:
-
-```bash
-curl -fsSL https://deno.land/install.sh | sh
-```
-
-### 2. 克隆项目
-
-```bash
-git clone https://github.com/liyown/ai-trend-publish
-cd ai-trend-publish
-```
-
-### 3. 创建配置
+### 1. 创建配置
 
 ```bash
 cp trendpublish.config.example.ts trendpublish.config.ts
-deno task doctor
 ```
 
-最小配置只需要服务密钥和一套大模型配置：
+在 `trendpublish.config.ts` 中至少配置服务鉴权和大模型能力。建议先保持
+`features.article.dryRun: true`，只生成本地预览，不上传或发布。
 
-```ts
-import { defineConfig } from "@src/utils/config/define-config.ts";
-
-export default defineConfig({
-  server: {
-    apiKey: "your-api-key",
-  },
-  providers: {
-    ai: {
-      baseUrl: "https://api.deepseek.com/v1",
-      apiKey: "your-ai-api-key",
-      model: "deepseek-chat",
-    },
-  },
-  features: {
-    article: {
-      dryRun: true,
-      renderer: {
-        template: "minimal",
-        promptProfile: "technology",
-      },
-      sources: [
-        "https://news.ycombinator.com/",
-      ],
-    },
-  },
-});
-```
-
-更多配置见 [配置说明](docs/configuration.md)。
-
-### 4. 本地验证
+### 2. 检查环境并生成预览
 
 ```bash
-# 检查配置和必填项
+# 检查配置、依赖和发布前置条件
 deno task doctor
 
-# 预览全部微信模板
-deno task preview
-
-# 跑一次微信文章流程，不上传、不发布
+# 运行一篇本地预览：不上传图片、不创建草稿、不发布
 deno task article --dry-run
 
-# 跑多公众号矩阵 dry-run；不指定账号时使用全部启用账号
-deno task article --matrix
-deno task article --matrix --account main,lab
-
-# 启动本地 API 服务 + Dashboard 前端热更新
+# 启动 API 服务与 Dashboard
 deno task dev
 ```
 
-`deno task dev` 会同时启动后端服务 `http://localhost:8000` 和 Vite Dashboard
-`http://localhost:5173/dashboard/`，前端修改会自动刷新并代理 `/api` 到本地后端。
+启动后可访问：
 
-`article --dry-run` 会把渲染后的 HTML 输出到
-`src/temp/`，适合正式发布前检查正文效果。 `article --matrix`
-会为每个账号创建独立 dry-run，并在运行记录里生成矩阵父批次汇总和账号对比产物，
-用于检查主线、文章形态和质量分是否真正拉开差异。
+```text
+Dashboard：http://localhost:8000/dashboard
+API：http://localhost:8000
+```
 
-## 配置原则
+运行产物默认写入 `src/temp/`，包括来源快照、文章计划、HTML、图片、审稿结果和错误
+信息。该目录包含运行数据，不应提交到版本库。
 
-TrendPublish 的配置分成三层：
+## 发布配置
 
-- `providers`：只放外部服务凭证和默认能力参数。
-- `features.article`：决定微信文章工作流开启哪些功能、选择哪个
-  provider、使用什么参数。
-- `storage.runtimeConfig`：保存 Dashboard 可编辑的运行时业务配置。本地/Docker 用
-  SQLite，Cloudflare 用 D1；密钥不会写入数据库。
+### 公众号
 
-例如，开启 Pexels 正文配图时：
+公众号发布配置位于 `providers.publish.weixin` 与
+`features.article.publisher`。建议先使用草稿模式验证排版，再启用自动公开发布。
 
 ```ts
-providers: {
-  stockPhoto: {
-    pexels: { apiKey: "your-pexels-api-key" },
-  },
-},
 features: {
   article: {
-    bodyImages: {
-      mode: "missing",
-      count: 1,
+    dryRun: false,
+    publisher: {
+      provider: "weixin",
+      publishMode: "mass",
     },
   },
 },
 ```
 
-这样可以避免“凭证配置”和“功能开关”混在一起。
+公众号真实发布前，必须在公众号后台配置发布服务器的出口 IP 白名单。
 
-## 常用功能开关
+### 今日头条
 
-| 目标           | 配置位置                                  | 说明                                                                         |
-| -------------- | ----------------------------------------- | ---------------------------------------------------------------------------- |
-| 选择文章模板   | `features.article.renderer.template`      | 支持 `minimal`、`longform`、`product`、`dynamic` 等                          |
-| 选择提示词风格 | `features.article.renderer.promptProfile` | 支持 `technology`、`business`、`product`、`developer`、`research`、`general` |
-| 配置数据源     | `features.article.sources`                | 直接写 URL，也可以用 `group:url` 指定抓取分组                                |
-| 配置抓取策略   | `fetchGroups`                             | 分组内 provider 按顺序 fallback                                              |
-| 开启封面生图   | `features.article.cover`                  | 支持 `dashscope` / `minimax`，需要对应 `providers.image.*.apiKey`            |
-| 开启正文配图   | `features.article.bodyImages`             | 原文图优先，缺图时检索 Pexels；需要 `PEXELS_API_KEY`                         |
-| 开启向量去重   | `features.article.deduplication`          | 需要 embedding provider；本地/Docker 用 SQLite，Cloudflare 用 D1             |
-| 开启通知       | `features.article.notifications.channels` | 支持 Bark、钉钉、飞书                                                        |
-| 页面改配置     | `storage.runtimeConfig`                   | Dashboard 保存 Profile、数据源、抓取分组和定时规则，下一次运行生效           |
-| 接入日志观测   | `observability`                           | 所有 `Logger` 输出可镜像到 stdout、Axiom、Better Stack 或 HTTP ingest        |
-| 正式发布微信   | `features.article.dryRun: false`          | 本地固定 IP 用 `weixin`，Cloudflare 推荐 `weixin-relay`                      |
-| 选择发布目标   | `features.article.publisher.publishMode`  | `draft` 仅保存草稿；`publish` 公开发布；`mass` 提前 10 分钟备稿并定时群发    |
-| 设置发布分数   | `features.article.qualityGate.minScore`   | 自动公开发布的最低质量分；未达标文章自动保留为草稿                           |
-| 多公众号发布   | `features.article.publisher.accountId`    | 对应 `providers.publish.weixin.accounts` 的账号 ID；relay 只做凭证透传代理   |
-| 矩阵运营       | Dashboard `账号矩阵`                      | 编辑账号定位、默认方案和来源分组，运行后展示账号级质量趋势、风险和学习建议   |
+今日头条采用“主服务调度 + 头条 Relay 执行”的方式。主服务在目标时间前生成文章，
+到达目标时间后由 Relay 打开头条创作中心并直接发布，不使用头条页面原生定时发布。
 
-完整字段说明见 [配置说明](docs/configuration.md)。
+首次部署需要在 Relay
+所在服务器扫码登录一次。登录态会保存在独立浏览器资料目录中，
+后续服务重启会继续复用。不要复制、公开或提交该目录。
 
-## 数据源写法
+启动 Relay：
 
-最简单的写法是直接放 URL：
-
-```ts
-features: {
-  article: {
-    sources: [
-      "https://news.ycombinator.com/",
-      "https://openai.com/news/",
-    ],
-  },
-},
-fetchGroups: {
-  default: ["auto"],
-},
+```bash
+TOUTIAO_RELAY_TOKEN=请设置高强度随机令牌 deno task toutiao:relay
 ```
 
-需要指定抓取策略时，可以使用自定义分组前缀：
+服务器部署、扫码登录、环境变量和 systemd 守护说明见
+[今日头条 Relay 文档](docs/toutiao-relay.md)。
 
-```ts
-providers: {
-  fetch: {
-    firecrawl: { apiKey: "your-firecrawl-api-key" },
-    jina: { apiKey: "your-jina-api-key" },
-    twitter: { xquikApiKey: "your-xquik-api-key" },
-  },
-},
-fetchGroups: {
-  default: ["auto"],
-  web: ["firecrawl", "jina"],
-  social: ["twitter"],
-},
-features: {
-  article: {
-    sources: [
-      "web:https://openai.com/news/",
-      "social:https://x.com/OpenAIDevs",
-    ],
-  },
-},
-```
+## 定时任务与安全策略
 
-`web:` 和 `social:` 不是固定 provider 名，而是你自己定义的抓取分组名。
-
-## 支持的服务
-
-当前版本建议先用一套稳定的大模型配置跑通主链路，再按需开启抓取增强、图片生成、
-去重和通知。
-
-### AI 大模型
-
-- OpenAI：[申请地址](https://platform.openai.com/api-keys)； `baseUrl` 填
-  `https://api.openai.com/v1`；`model` 按平台模型列表选择。
-- DeepSeek：[申请地址](https://platform.deepseek.com/api_keys)； `baseUrl` 填
-  `https://api.deepseek.com/v1`；常用模型为 `deepseek-chat`、
-  `deepseek-reasoner`。
-- 通义千问 / DashScope：[申请地址](https://bailian.console.aliyun.com/)；\
-  `baseUrl` 填 `https://dashscope.aliyuncs.com/compatible-mode/v1`；常用模型为\
-  `qwen-plus`、`qwen-max`。
-
-### 数据源获取
-
-- 普通网页 URL：直接写到 `features.article.sources`。
-- RSS / RSSHub：直接写 RSS URL；RSSHub 可配置 `providers.fetch.rss.baseUrl`。
-- FireCrawl：[申请地址](https://firecrawl.dev/)；配置
-  `providers.fetch.firecrawl.apiKey`。
-- Jina Reader / Search：[申请地址](https://jina.ai/reader/)；配置
-  `providers.fetch.jina.apiKey`。
-- Brave Search：[申请地址](https://brave.com/search/api/)；配置
-  `providers.fetch.brave.apiKey`，适合作为低成本通用搜索入口。
-- Tavily：[申请地址](https://www.tavily.com/)；配置
-  `providers.fetch.tavily.apiKey`，适合 AI research / agent 风格搜索。
-- Exa：[申请地址](https://exa.ai/)；配置 `providers.fetch.exa.apiKey`，
-  适合语义搜索和研究型选题。
-- Serper：[申请地址](https://serper.dev/)；配置
-  `providers.fetch.serper.apiKey`，适合需要 Google SERP 覆盖的场景。
-- NewsAPI：[申请地址](https://newsapi.org/)；配置
-  `providers.fetch.newsapi.apiKey`，适合新闻搜索，生产限制以官方套餐为准。
-- GDELT：无需 API Key，适合全球新闻线索。
-- Hacker News：无需 API Key，适合技术社区线索。
-- arXiv：无需 API Key，适合论文和研究线索。
-- Twitter/X：[申请地址](https://developer.x.com/)；配置
-  `providers.fetch.twitter.bearerToken`。
-- Xquik：[申请地址](https://xquik.com/en/api-keys)；配置
-  `providers.fetch.twitter.xquikApiKey`。
-- 关键词搜索数据源写成 `search:关键词`，路由到 `fetchGroups.search`。
-
-### 图片生成
-
-- 阿里云图片生成：[申请地址](https://bailian.console.aliyun.com/)；配置
-  `providers.image.dashscope.apiKey`。
-- MiniMax 图片生成：[申请地址](https://platform.minimax.io/)；配置
-  `providers.image.minimax.apiKey`，当前默认模型为 `image-01`。
-- 阿里云封面图默认模型：`qwen-image-2.0-pro`，更适合中文标题和封面版式。
-- 阿里云正文配图默认模型：`qwen-image-2.0`，也可手动配置 `wan2.7-image-pro`
-  或兼容旧模型 `wanx2.1-t2i-turbo`。
-- 正文配图通过 `features.article.bodyImages` 开启，可设置生成模型、数量和尺寸。
-- 后续：OpenAI Images、Gemini / Imagen、Replicate、Stability、ComfyUI。
-
-### 发布与素材
-
-- 微信公众号：[申请地址](https://mp.weixin.qq.com/)；配置
-  `providers.publish.weixin.appId` 和 `providers.publish.weixin.appSecret`。
-- Cloudflare 真实发布推荐使用
-  `weixin-relay`，微信凭证仍放在主服务配置中并按次透传。
-- 当前支持：封面上传、正文图片上传、草稿创建和发布。
-- 正式发布前需要在公众号后台配置 IP 白名单。
-- 后续：Twitter/X thread、Telegram、飞书文档、Notion、静态站点、Webhook。
-
-### 去重、存储和通知
-
-- 向量去重：DashScope Embedding；常用模型为 `text-embedding-v3`。
-- 存储：本地/Docker 使用文件和 SQLite；Cloudflare 原生模式使用 R2、KV、D1。
-- 通知：当前支持 Bark、钉钉机器人、飞书机器人。
-- 后续：OpenAI / Jina / BGE Embedding、PostgreSQL、SQLite、Vectorize、
-  企业微信、Telegram、Slack、Discord、邮件通知。
-
-## 微信模板
-
-模板通过 `features.article.renderer.template` 选择：
-
-- `minimal`：极简阅读风，适合稳定日更。
-- `longform`：长文杂志风，适合深度整理。
-- `product`：产品更新风，适合产品、工具、版本动态。
-- `darktech`：深色研究笔记风。
-- `dynamic`：AI 根据本次文章内容实时生成公众号正文 HTML，失败时自动回退
-  `minimal`。
-
-也可以使用 `default`、`modern`、`tech`、`mianpro`、`random`。模板展示见
-[模板文档](docs/templates.md) 或
-[在线展示](https://liyown.github.io/ai-trend-publish/templates)。
+- 公众号定时任务由 Dashboard 的运行时配置管理，建议每个账号只保留一个启用计划。
+- 今日头条默认每日 11:00 执行，生成窗口默认提前 150 分钟；可以通过服务器环境变量
+  调整。
+- 质量门禁默认开启。存在高风险事实、正文过短、封面缺失或平台前置条件不满足时，任务
+  会被阻止或保留为草稿，而不是强行发布。
+- 发布与反查均使用幂等键，避免服务重启或重试导致重复创建文章。
+- 头条 Relay
+  仅应监听本机回环地址；浏览器资料、截图和状态文件均属于敏感运行数据。
 
 ## 常用命令
 
 ```bash
-# 日常使用
+# 配置与质量检查
 deno task doctor
-deno task dev
+deno task test
+deno task verify
+
+# 内容生成与预览
 deno task article --dry-run
-deno task article --matrix --account main,lab
-deno task article
 deno task preview
 
-# 质量检查
-deno task verify
-deno task test
-
-# 本地前端/文档开发
+# 本地服务
+deno task dev
 deno task dashboard
-deno task docs
 
-# 部署
-deno task docker
+# 发布 Relay
 deno task relay
-deno task cf deploy
-```
+deno task toutiao:relay
 
-`deno task dashboard` 只启动 Dashboard 前端 dev server；日常开发推荐直接用
-`deno task dev`，它会同时启动后端和前端 watch。
+# Docker 与 Cloudflare 工具
+deno task docker
+deno task cf dry-run
+```
 
 ## 项目结构
 
-整体采用 modular monolith：业务能力集中在微信文章 feature，外部服务统一放在
-integrations，运行时和存储通过 ports 隔离。
-
-```mermaid
-flowchart TB
-  UI["Dashboard / CLI / API"] --> APP["app/weixin-article<br/>应用组装层"]
-  APP --> WF["Workflow Runtime<br/>Local / Cloudflare"]
-  APP --> FEATURE["features/weixin-article<br/>业务编排与领域服务"]
-  FEATURE --> MODULES["modules<br/>排序 / 摘要 / Markdown 等内部能力"]
-  FEATURE --> PORTS["core/ports<br/>LLM / Fetch / Image / Publish / Store"]
-  PORTS --> INTEGRATIONS["integrations<br/>外部服务 Adapter"]
-  INTEGRATIONS --> EXT["LLM / Search / Image / Weixin / Notify"]
-  WF --> STORAGE["ArtifactStore / RunStateStore / VectorStore"]
-  STORAGE --> LOCAL["Local SQLite / 文件"]
-  STORAGE --> CF["Cloudflare D1 / KV / R2"]
-```
-
 ```text
 src/
-  app/weixin-article/          # 应用组装层：创建 provider、规划抓取、定义 workflow
-  features/weixin-article/     # 微信文章业务模型、服务、渲染和 workflow
-  integrations/                # 外部服务 adapter：LLM、fetch、image、publish、notify、vector
-  core/                        # workflow runtime、ports 和通用基础能力
-  modules/                     # 内容排序、摘要、Markdown 转换等内部可复用能力
-  platform/cloudflare/         # Cloudflare 可选部署入口
-  platform/local/              # 本地 artifact 和运行状态存储
-  utils/config/                # TypeScript 配置定义、解析与校验
+  app/weixin-article/       应用组装、运行时配置和抓取规划
+  features/weixin-article/ 内容选题、写作、审稿、排版和工作流
+  apps/toutiao-relay/       今日头条浏览器 Relay
+  controllers/              定时调度、任务状态与 API 控制器
+  integrations/             大模型、抓取、图片、发布与通知适配器
+  platform/                 本地与 Cloudflare 存储实现
+  utils/config/             配置解析与校验
+deploy/systemd/             主服务与头条 Relay 守护模板
+docs/                       部署、配置、模板和接口说明
 ```
 
-架构细节见 [架构总览](docs/architecture.md)。
+## 文档
 
-## 发布与部署
-
-部署时先选一种形态：
-
-- **本地开发**：改代码、调 Dashboard、跑 dry-run。
-- **Docker 服务器**：推荐给大多数自部署用户，使用 GHCR 镜像和挂载配置。
-- **Cloudflare Workflows**：适合 Serverless 定时运行，使用 Worker + Workflows +
-  D1/KV/R2。
-
-本地开发：
-
-```bash
-cp trendpublish.config.example.ts trendpublish.config.ts
-deno task doctor
-deno task dev
-```
-
-Docker 部署：
-
-```bash
-mkdir -p config data/temp
-cp trendpublish.config.docker.example.ts config/trendpublish.config.ts
-deno task docker
-```
-
-Docker 默认使用 `ghcr.io/liyown/ai-trend-publish:latest`，配置挂载到
-`/app/config/trendpublish.config.ts`，运行产物挂载到 `/app/src/temp`。
-
-Cloudflare 部署：
-
-```bash
-deno task cf dry-run
-deno task cf migrate
-deno task cf deploy
-deno task cf smoke --url https://<worker-domain> --api-key <SERVER_API_KEY>
-```
-
-微信真实发布需要固定 IP：
-
-- 本地/Docker 有固定 IP：可以直连微信。
-- Cloudflare：推荐把 `weixin-relay` 部署到固定 IP 机器，Cloudflare 只调用
-  relay，并把本次发布账号的微信凭证透传给 relay。
-
-relay 和主服务使用同一个镜像、同一套配置结构：
-
-```bash
-deno task docker relay
-```
-
-relay 只保存自己的 `server.apiKey`，不保存公众号 AppID/AppSecret，也不维护账号
-列表。多公众号时，微信凭证和账号运营信息都在主服务侧维护；relay 只负责固定 IP
-转发微信 API。
-
-部署细节见 [部署文档](docs/deployment.md)。
-
-## JSON-RPC API
-
-服务启动后提供 `POST /api/workflow`，可手动触发微信文章工作流。
-
-```bash
-curl -X POST http://localhost:8000/api/workflow \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-api-key" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "triggerWorkflow",
-    "params": {
-      "workflowType": "weixin-article-workflow",
-      "dryRun": true
-    },
-    "id": 1
-  }'
-```
-
-更多说明见 [JSON-RPC API 文档](docs/api/json-rpc-api.md)。
-
-## 相关文档
-
-- [快速开始](docs/getting-started.md)
 - [配置说明](docs/configuration.md)
-- [架构总览](docs/architecture.md)
-- [模板文档](docs/templates.md)
-- [部署文档](docs/deployment.md)
-- [Jina 集成指南](docs/integrations/jina-integration-guide.md)
-- [钉钉通知指南](docs/integrations/dingtalk-webhook-guide.md)
+- [部署说明](docs/deployment.md)
+- [今日头条 Relay](docs/toutiao-relay.md)
+- [架构说明](docs/architecture.md)
+- [模板说明](docs/templates.md)
+- [接口说明](docs/api/json-rpc-api.md)
 
-## 社区与贡献
+## 许可
 
-- Discord: [https://discord.gg/mrZvBHNawS](https://discord.gg/mrZvBHNawS)
-- QQ 群：TrendPublish-1
-
-欢迎提交 Issue 和 Pull Request。建议在提交前先运行：
-
-```bash
-deno task verify
-```
-
-## 致谢
-
-感谢社区贡献者对项目的支持。
-
-## Star History
-
-[Star History Chart](https://star-history.com/#liyown/ai-trend-publish&Date)
-
-## License
-
-本项目使用 MIT License，详见 [LICENSE](LICENSE)。
+本项目采用 [MIT License](LICENSE)。
